@@ -1,0 +1,33 @@
+# 의존성
+node_modules
+
+# 빌드 산출물
+/.build
+/.svelte-kit
+.output
+.vercel
+.netlify
+.wrangler
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# 사진·분석 결과·보고서(개인 학습 데이터). 설정과 지침(user/config, user/prompts)은 커밋한다
+/user/data
+
+# 환경 설정·비밀
+.env
+.env.*
+!.env.example
+!.env.test
+
+# 테스트·도구 로그
+coverage
+*.log
+npm-debug.log*
+
+# OS·편집기·에이전트
+.DS_Store
+Thumbs.db
+*.swp
+.omo/
+.serena/

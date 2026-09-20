@@ -1,0 +1,18 @@
+# cloudflared 터널 user 서비스 (math.example.com → 127.0.0.1:3141). 설치:
+#   cloudflared tunnel login                    # 브라우저로 Cloudflare 승인 → ~/.cloudflared/cert.pem
+#   cloudflared tunnel create math             # 터널 생성 → ~/.cloudflared/<uuid>.json credentials
+#   cloudflared tunnel route dns math math.example.com
+#   cp user/deploy/cloudflared-config.example.yml ~/.cloudflared/config.yml   # tunnel: <uuid> 채우기
+#   mkdir -p ~/.config/systemd/user && cp user/deploy/cloudflared.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now cloudflared
+[Unit]
+Description=cloudflared tunnel math (math.example.com → 127.0.0.1:3141)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared --config %h/.cloudflared/config.yml tunnel run math
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

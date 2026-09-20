@@ -1,0 +1,37 @@
+# systemd 사용자 서비스. 설치:
+#   mkdir -p ~/.config/systemd/user && cp user/deploy/ymath.service ~/.config/systemd/user/
+#   npm run build
+#   systemctl --user daemon-reload && systemctl --user enable --now ymath
+#   loginctl enable-linger $USER      # 로그인하지 않아도 계속 실행
+# 앞에는 cloudflared 터널이 math.example.com → 127.0.0.1:3141 로 붙는다. 내부망은 192.168.1.x:3141 직접 접속.
+[Unit]
+Description=ymath — 수학 오답노트 (SvelteKit)
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/ymath
+ExecStart=/usr/bin/node .build
+Restart=on-failure
+RestartSec=3
+Environment=HOST=0.0.0.0
+Environment=PORT=3141
+# cloudflared 가 X-Forwarded-Proto(https) 와 X-Forwarded-Host 를 보내므로 이를 신뢰한다
+Environment=PROTOCOL_HEADER=x-forwarded-proto
+Environment=HOST_HEADER=x-forwarded-host
+# 사진(수 MB)을 받아야 하므로 기본 512KB 제한을 늘린다
+Environment=BODY_SIZE_LIMIT=30M
+# 사용자 서비스의 PATH 에는 ~/.local/bin 이 없다. claude 와 ocr 이 거기에 있다.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+# 밖에서 들어올 때 쓰는 설정은 저장소에 넣지 않고 별도 파일에 둔다(chmod 600):
+#   ~/.config/ymath.env  →  PASSWORD=...  PUBLIC_URL=https://math.example.com  STUDENT_NAME=...
+# 내부망(기본 192.168.1.0/24)은 로그인 없이 들어온다. 범위를 바꾸려면 TRUSTED_CIDRS=... 도 같은 파일에.
+EnvironmentFile=-%h/.config/ymath.env
+# 선택: Environment=DATA_DIR=%h/ymath-data   (기본 ./user/data)
+# 선택: Environment=ANALYZE_MODEL=sonnet
+# 선택: codex 를 쓰려면 실행 파일 경로와 기본 LLM 을 지정한다(PATH 에 codex 가 없다)
+#   Environment=CODEX_BIN=/절대/경로/codex
+#   Environment=ANALYZE_PROVIDER=codex
+# 선택: agy 는 ~/.local/bin 에 있어 위 PATH 로 찾는다. 기본 LLM 으로 쓰려면 ANALYZE_PROVIDER=agy, 모델은 AGY_MODEL
+
+[Install]
+WantedBy=default.target

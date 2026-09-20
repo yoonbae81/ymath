@@ -1,0 +1,301 @@
+/*
+ * 공용 디자인 장치. 보고서(md-doc)와 문제별 상세 화면이 같은 모양을 쓰도록 한 곳에 모은다.
+ *   구분 띠(.band)        섹션 제목: 왼쪽 굵은 띠 + 옅은 배경
+ *   번호 배지(.step-num)   (1) (2) 처럼 원 안의 번호
+ *   단계 목록(.step-list)  번호 배지 + **굵은 용어:** 설명
+ *   강조 박스(.callout)    💡 노트 / ⚠️ 주의 / ✅ 확인
+ *   라벨 목록(.label-list) - **라벨:** 설명
+ * 색은 layout 의 CSS 변수(--accent, --warn, --ok …)만 쓰므로 어두운 테마와 인쇄(밝은 색 강제)에 자동으로 맞는다.
+ */
+
+/* ── 구분 제목 ─────────────────────────── */
+.band,
+.md-doc h2 {
+	margin: 2.2rem 0 1rem;
+	padding: 0 0 0.55rem 10px;
+	border: none;
+	border-left: 3.5px solid var(--accent);
+	border-bottom: 1px solid var(--line);
+	background: transparent;
+	color: var(--text);
+	font-size: 1.1rem;
+	font-weight: 800;
+	line-height: 1.4;
+	word-break: keep-all;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.band:first-child,
+.md-doc h2:first-child {
+	margin-top: 0.2rem;
+}
+
+/* ── 번호 배지 ─────────────────────────── */
+.step-num {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	width: 1.55rem;
+	height: 1.55rem;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-size: 0.82rem;
+	font-weight: 800;
+	line-height: 1;
+}
+
+/* ── 단계 목록 ─────────────────────────── */
+.step-list {
+	list-style: none;
+	margin: 1rem 0 1.2rem;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 0.85rem;
+}
+.step-list > li {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.65rem;
+}
+.step-list .step-num {
+	margin-top: 0.1rem;
+}
+.step-body {
+	min-width: 0;
+	flex: 1;
+}
+.step-body > strong:first-child {
+	color: var(--accent);
+}
+
+/* ── 번호 붙은 소제목: "(1) 제목" ─────────── */
+.md-doc h2.has-step,
+.md-doc h3.has-step,
+.md-doc h4.has-step,
+.has-step {
+	display: flex;
+	align-items: center;
+	gap: 0.6rem;
+}
+.md-doc h3 {
+	margin: 1.8rem 0 0.8rem;
+	font-size: 1.05rem;
+	font-weight: 700;
+	word-break: keep-all;
+}
+
+/* ── 강조 박스 ─────────────────────────── */
+.callout {
+	margin: 1.4rem 0;
+	padding: 1rem 1.15rem;
+	border-left: 4px solid var(--accent);
+	border-radius: 0 10px 10px 0;
+	background: var(--accent-soft);
+}
+.callout-title {
+	display: block;
+	margin-bottom: 0.4rem;
+	color: var(--accent);
+	font-size: 0.98rem;
+}
+.callout-title:only-child {
+	margin-bottom: 0;
+}
+.callout-body p {
+	margin: 0.4rem 0 0;
+}
+/* 💡 노트: 기본 강조 박스와 같은 파란 계열(종류를 명시해 두는 것) */
+.callout-note {
+	border-left-color: var(--accent);
+	background: var(--accent-soft);
+}
+.callout-warn {
+	border-left-color: var(--warn);
+	background: var(--warn-soft);
+}
+.callout-warn .callout-title {
+	color: var(--warn);
+}
+.callout-ok {
+	border-left-color: var(--ok);
+	background: var(--ok-soft);
+}
+.callout-ok .callout-title {
+	color: var(--ok);
+}
+
+/* ── 라벨 목록 ─────────────────────────── */
+.label-list {
+	margin: 0.8rem 0 1.2rem;
+	padding-left: 1.25rem;
+}
+.label-list > li {
+	margin: 0.5rem 0;
+}
+.label-list > li > strong:first-child {
+	color: var(--accent);
+}
+
+/* ── 보고서 본문의 표: 머리글 강조 ─────────── */
+.md-doc table th {
+	color: var(--accent);
+}
+.md-doc table td strong {
+	color: var(--accent);
+}
+
+/* ── 공용 배지 (라벨) ─────────────────────────── */
+.badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 0.75rem;
+	font-weight: 700;
+	padding: 2.5px 8px;
+	border-radius: 999px;
+	white-space: nowrap;
+	line-height: 1.35;
+	vertical-align: middle;
+	background: var(--line);
+	color: var(--muted);
+}
+.badge.topic {
+	background: var(--accent);
+	color: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+	.badge.topic {
+		color: #0f172a;
+	}
+}
+.badge.wb {
+	background: var(--line);
+	color: var(--text);
+	font-weight: 600;
+}
+.badge.pnum {
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+}
+.badge.etype {
+	background: var(--warn-soft);
+	color: var(--warn);
+}
+.badge.accent {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+.badge.ok,
+.badge.sev1 {
+	background: var(--ok-soft);
+	color: var(--ok);
+}
+.badge.warn,
+.badge.sev2 {
+	background: var(--warn-soft);
+	color: var(--warn);
+}
+.badge.bad,
+.badge.sev3 {
+	background: var(--bad-soft);
+	color: var(--bad);
+}
+.badge.period,
+.badge.date {
+	background: var(--bg);
+	border: 1px solid var(--line);
+	color: var(--muted);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+
+/* ── 문제 링크 (배지 조합) ─────────────────────────── */
+a.problem-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	text-decoration: none !important;
+	vertical-align: middle;
+	line-height: 1.35;
+	transition: opacity 0.15s, transform 0.15s;
+}
+a.problem-link:hover {
+	opacity: 0.85;
+	text-decoration: none !important;
+}
+a.problem-link .badge {
+	cursor: pointer;
+}
+
+/* ── 인쇄: 배경색(띠·배지·박스)이 종이에도 나오게 ─ */
+@media print {
+	a.problem-link {
+		text-decoration: none !important;
+	}
+	.badge,
+	.band,
+	.md-doc h2,
+	.step-num,
+	.callout,
+	.md-doc table th {
+		-webkit-print-color-adjust: exact;
+		print-color-adjust: exact;
+	}
+	.badge.topic {
+		color: #ffffff !important;
+	}
+	.callout,
+	.step-list > li,
+	.md-doc h2,
+	.md-doc h3 {
+		break-inside: avoid;
+	}
+	.md-doc h2,
+	.md-doc h3 {
+		break-after: avoid;
+	}
+}
+
+/* ── 폰: 들여쓰기와 좌우 여백은 좁혀 내용 폭을 넓히되, 세로 마진은 여유를 준다 ─────────── */
+@media (max-width: 560px) {
+	.label-list {
+		padding-left: 1.05rem;
+		margin: 0.7rem 0 1.1rem;
+	}
+	.step-list {
+		gap: 0.7rem;
+		margin: 0.9rem 0 1.1rem;
+	}
+	.step-list > li {
+		gap: 0.55rem;
+	}
+	.callout {
+		padding: 0.85rem 0.95rem;
+		margin: 1.2rem 0;
+	}
+	.band,
+	.md-doc h2 {
+		margin: 1.8rem 0 0.85rem;
+		padding: 0 0 0.45rem 8px;
+		font-size: 1.05rem;
+	}
+}
+
+/* ── 한글 줄바꿈: 띄어쓰기 단위로 끊는다("평 / 면좌표" 처럼 낱말 중간에서 끊지 않음). 아주 긴 토큰만 예외로 끊는다 ─ */
+.md-doc,
+.md-doc td,
+.md-doc th,
+.label-list,
+.step-body,
+.callout {
+	word-break: keep-all;
+	overflow-wrap: anywhere;
+}
+

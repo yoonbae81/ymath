@@ -1,0 +1,10 @@
+# ~/.cloudflared/config.yml 로 복사한 뒤 tunnel 을 실제 id 로 채운다:
+#   cloudflared tunnel list 로 id 확인 (기본값은 이름 'math' 로도 동작하지만 UUID 가 명시적)
+# credentials-file 은 cloudflared tunnel create math 가 만든 <uuid>.json 경로
+tunnel: <uuid>
+credentials-file: /home/<user>/.cloudflared/<uuid>.json
+
+ingress:
+  - hostname: math.example.com
+    service: http://127.0.0.1:3141
+  - service: http_status:404

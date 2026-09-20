@@ -1,0 +1,254 @@
+{
+	"$comment": "topic / unit_major / concept_ids / root_cause_concept_ids / secondary_topics 의 enum 은 taxonomy.ts 가 prompts/curriculum.md 에서 읽어 런타임에 채운다. 정답·풀이·올바른 접근을 담는 필드는 의도적으로 없다(정답 발설 원천 차단). 추가하지 말 것.",
+	"type": "object",
+	"additionalProperties": false,
+	"required": [
+		"problem",
+		"classification",
+		"asks",
+		"student_work",
+		"error_analysis",
+		"flags",
+		"confidence",
+		"verification"
+	],
+	"properties": {
+		"problem": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"number_guess",
+				"text_md",
+				"figure_description"
+			],
+			"properties": {
+				"number_guess": {
+					"type": "string",
+					"description": "문제 번호(보이면). 없으면 빈 문자열"
+				},
+				"text_md": {
+					"type": "string",
+					"description": "문제 본문. LaTeX 포함 Markdown"
+				},
+				"figure_description": {
+					"type": "string",
+					"description": "도형·그래프의 풀이에 필요한 정보. 없으면 빈 문자열"
+				}
+			}
+		},
+		"classification": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"topic",
+				"topic_rationale",
+				"secondary_topics",
+				"unit_major",
+				"unit_minor",
+				"concept_ids",
+				"question_type",
+				"difficulty"
+			],
+			"properties": {
+				"topic": {
+					"type": "string",
+					"description": "영역. 정확히 하나"
+				},
+				"topic_rationale": {
+					"type": "string",
+					"description": "영역 판정 이유 한 줄"
+				},
+				"secondary_topics": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"unit_major": {
+					"type": "string",
+					"description": "curriculum.md의 단원 이름"
+				},
+				"unit_minor": {
+					"type": "string",
+					"description": "소단원 또는 세부 주제(자유 서술)"
+				},
+				"concept_ids": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"question_type": {
+					"enum": [
+						"계산",
+						"증명·서술",
+						"도형",
+						"그래프",
+						"문장제",
+						"개념 이해",
+						"기타"
+					]
+				},
+				"difficulty": {
+					"enum": [
+						1,
+						2,
+						3,
+						4,
+						5
+					]
+				}
+			}
+		},
+		"asks": {
+			"type": "string",
+			"description": "이 문제가 묻는 것 한 줄"
+		},
+		"student_work": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"visible",
+				"transcription_md",
+				"student_answer"
+			],
+			"properties": {
+				"visible": {
+					"type": "boolean"
+				},
+				"transcription_md": {
+					"type": "string"
+				},
+				"student_answer": {
+					"type": "string"
+				}
+			}
+		},
+		"error_analysis": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"error_type",
+				"error_step",
+				"explanation",
+				"root_cause_concept_ids",
+				"prerequisites",
+				"misconception",
+				"error_pattern_id",
+				"trigger",
+				"self_check",
+				"severity",
+				"nudges"
+			],
+			"properties": {
+				"error_type": {
+					"enum": [
+						"숨은 전제·특수 조건 누락",
+						"개념의 본질적 해석 오류",
+						"전략·모델링 실패",
+						"연산·기호 착오",
+						"판정 불가"
+					]
+				},
+				"error_step": {
+					"type": "string",
+					"description": "최초 오류 지점. 풀이가 어긋나기 시작한 줄·식·판단을 지목만 하고 올바른 내용은 쓰지 않는다"
+				},
+				"explanation": {
+					"type": "string",
+					"description": "왜 어긋났는지 학생 사고 관점 1~2문장. 올바른 식·값 금지"
+				},
+				"root_cause_concept_ids": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"prerequisites": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					}
+				},
+				"misconception": {
+					"type": "string"
+				},
+				"error_pattern_id": {
+					"type": "string",
+					"pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+				},
+				"trigger": {
+					"type": "string"
+				},
+				"self_check": {
+					"type": "string",
+					"description": "풀이 끝에 스스로 할 점검을 한 줄 질문으로. 답을 알려 주지 않는다"
+				},
+				"severity": {
+					"enum": [
+						1,
+						2,
+						3
+					]
+				},
+				"nudges": {
+					"type": "object",
+					"additionalProperties": false,
+					"required": [
+						"condition_question",
+						"strategy_question"
+					],
+					"properties": {
+						"condition_question": {
+							"type": "string",
+							"description": "Q1 문제 조건 재확인. 간과한 조건의 이름을 가리키는 질문(~요?). 결과·값 금지"
+						},
+						"strategy_question": {
+							"type": "string",
+							"description": "Q2 개념·전략 전환. 다른 관점으로 묶거나 바라보게 하는 질문(~요?). 결과·값 금지"
+						}
+					}
+				}
+			}
+		},
+		"flags": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"multiple_problems",
+				"unreadable"
+			],
+			"properties": {
+				"multiple_problems": {
+					"type": "boolean"
+				},
+				"unreadable": {
+					"type": "boolean"
+				}
+			}
+		},
+		"confidence": {
+			"enum": [
+				"high",
+				"medium",
+				"low"
+			]
+		},
+		"verification": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": [
+				"independently_solved",
+				"student_error_confirmed"
+			],
+			"properties": {
+				"independently_solved": {
+					"type": "boolean"
+				},
+				"student_error_confirmed": {
+					"type": "boolean"
+				}
+			}
+		}
+	}
+}
