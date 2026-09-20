@@ -10,9 +10,10 @@ vi.mock('$lib/server/queue', () => ({ getQueue: () => ({ enqueue }) }));
 import { POST as upload } from './upload/+server';
 import { DELETE as remove } from './items/[id]/+server';
 import { POST as retry } from './items/[id]/retry/+server';
+import { POST as feedback } from './items/[id]/feedback/+server';
 import { createItem, itemDir, readRecord, updateRecord } from '$lib/server/store';
 import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
-import type { Analysis } from '$lib/types';
+import { currentFeedback, type Analysis } from '$lib/types';
 
 const AJAX = { [AJAX_HEADER]: AJAX_VALUE };
 const WB = { id: 'gnw-common1', name: '개념원리 공통수학1', publisher: '개념원리', grade: '고1', semester: 1 };
@@ -185,5 +186,87 @@ describe('DELETE /api/items/[id]', () => {
 	it('잘못된 형식의 ID 또는 경로 탐색 시도는 400 차단', async () => {
 		await expect(call('../../../etc/passwd')).rejects.toMatchObject({ status: 400 });
 		await expect(call('invalid-id')).rejects.toMatchObject({ status: 400 });
+	});
+});
+
+describe('POST /api/items/[id]/feedback', () => {
+	const send = async (id: string, body: unknown, headers: Record<string, string> = { ...AJAX, 'content-type': 'application/json' }) =>
+		feedback(ev(post(`/api/items/${id}/feedback`, headers, typeof body === 'string' ? body : JSON.stringify(body)), { id }));
+	const analyzed = (at = '2026-09-20T00:00:00.000Z') => {
+		const r = createItem(WB);
+		updateRecord(r.id, (x) => {
+			x.status = 'done';
+			x.analysis = { asks: '…' } as unknown as Analysis;
+			x.meta = { provider: 'claude', model: 'sonnet', prompt_version: 'abc123', analyzed_at: at };
+		});
+		return r.id;
+	};
+
+	it('반응을 저장하고, 그때의 지침 버전·모델을 함께 남긴다', async () => {
+		const id = analyzed();
+		const res = await send(id, { choice: 'wrong_diagnosis', comment: '  부호가 아니라 조건을 놓쳤어요 ' });
+		expect(res.status).toBe(200);
+		const rec = readRecord(id)!;
+		expect(rec.feedback).toHaveLength(1);
+		expect(rec.feedback![0]).toMatchObject({
+			choice: 'wrong_diagnosis',
+			comment: '부호가 아니라 조건을 놓쳤어요',
+			analyzed_at: '2026-09-20T00:00:00.000Z',
+			prompt_version: 'abc123',
+			provider: 'claude',
+			model: 'sonnet'
+		});
+		expect(currentFeedback(rec)?.choice).toBe('wrong_diagnosis');
+	});
+
+	it('같은 분석에 다시 답하면 덮어쓰고, 재분석된 뒤의 답은 새로 쌓인다', async () => {
+		const id = analyzed();
+		await send(id, { choice: 'too_hard' });
+		await send(id, { choice: 'accurate' });
+		expect(readRecord(id)!.feedback!.map((f) => f.choice)).toEqual(['accurate']);
+
+		// 재분석: 새 분석에는 아직 답이 없고, 이전 답은 남는다
+		updateRecord(id, (x) => {
+			x.meta!.analyzed_at = '2026-09-21T00:00:00.000Z';
+			x.meta!.prompt_version = 'def456';
+		});
+		expect(currentFeedback(readRecord(id)!)).toBeNull();
+		await send(id, { choice: 'learned' });
+		const rec = readRecord(id)!;
+		expect(rec.feedback!.map((f) => [f.choice, f.prompt_version])).toEqual([
+			['accurate', 'abc123'],
+			['learned', 'def456']
+		]);
+		expect(currentFeedback(rec)?.choice).toBe('learned');
+	});
+
+	it('의견은 300자로 자르고 제어 문자는 뺀다', async () => {
+		const id = analyzed();
+		await send(id, { choice: 'too_hard', comment: `a\u0000b${'가'.repeat(400)}` });
+		const c = readRecord(id)!.feedback![0].comment;
+		expect(c.startsWith('ab')).toBe(true);
+		expect(c).toHaveLength(300);
+	});
+
+	it('알 수 없는 응답·깨진 본문은 400, 분석 전이거나 재분석 중이면 409, 없으면 404', async () => {
+		const id = analyzed();
+		await expect(send(id, { choice: 'great' })).rejects.toMatchObject({ status: 400 });
+		await expect(send(id, {})).rejects.toMatchObject({ status: 400 });
+		await expect(send(id, 'not json')).rejects.toMatchObject({ status: 400 });
+		await expect(send(id, { choice: 'accurate', comment: 5 })).rejects.toMatchObject({ status: 400 });
+		updateRecord(id, (x) => {
+			x.status = 'queued';
+		});
+		await expect(send(id, { choice: 'accurate' })).rejects.toMatchObject({ status: 409 });
+		await expect(send(createItem(WB).id, { choice: 'accurate' })).rejects.toMatchObject({ status: 409 });
+		await expect(send('20260101-000000-zzzz', { choice: 'accurate' })).rejects.toMatchObject({ status: 404 });
+		expect(readRecord(id)!.feedback).toBeUndefined();
+	});
+
+	it('커스텀 헤더가 없으면 403, 잘못된 ID 는 400', async () => {
+		const id = analyzed();
+		await expect(send(id, { choice: 'accurate' }, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
+		await expect(send('../../etc', { choice: 'accurate' })).rejects.toMatchObject({ status: 400 });
+		expect(readRecord(id)!.feedback).toBeUndefined();
 	});
 });

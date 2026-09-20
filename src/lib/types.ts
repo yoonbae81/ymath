@@ -70,6 +70,33 @@ export interface RecordFlags {
 	guardrail: string[];
 }
 
+/** 학생이 분석 결과를 읽고 남기는 반응. 값마다 프롬프트 개선 방향이 다르다 */
+export const FEEDBACK_CHOICES = ['accurate', 'learned', 'already_knew', 'too_hard', 'wrong_diagnosis'] as const;
+export type FeedbackChoice = (typeof FEEDBACK_CHOICES)[number];
+
+export const FEEDBACK_LABEL: Record<FeedbackChoice, string> = {
+	accurate: '🎯 정확함',
+	learned: '💡 새로 앎',
+	already_knew: '📖 이미 앎',
+	too_hard: '🤔 어려움',
+	wrong_diagnosis: '❌ 다름'
+};
+
+/** 부정 응답은 무엇이 문제였는지 한 줄을 받는다 */
+export const FEEDBACK_ASKS_COMMENT: FeedbackChoice[] = ['too_hard', 'wrong_diagnosis'];
+export const FEEDBACK_COMMENT_MAX = 300;
+
+/** 어느 분석(analyzed_at)에 대한 반응인지와 그때의 지침·모델을 함께 남겨, 지침을 바꾼 뒤 비교할 수 있게 한다 */
+export interface Feedback {
+	choice: FeedbackChoice;
+	comment: string;
+	created_at: string;
+	analyzed_at: string;
+	prompt_version: string;
+	provider?: Provider;
+	model: string;
+}
+
 export interface ItemRecord {
 	schema_version: 1;
 	id: string;
@@ -84,6 +111,14 @@ export interface ItemRecord {
 	/** 재분석 때 지정한 LLM. 없으면 서버 기본값(ANALYZE_PROVIDER)을 쓴다 */
 	requested_provider?: Provider;
 	meta: { provider?: Provider; model: string; prompt_version: string; analyzed_at: string } | null;
+	/** 분석 결과에 대한 학생 반응. 재분석해도 지우지 않고, 같은 분석에 다시 답하면 덮어쓴다 */
+	feedback?: Feedback[];
+}
+
+/** 지금 보이는 분석에 남긴 반응. 재분석으로 분석이 바뀌었으면 없는 것으로 본다 */
+export function currentFeedback(r: Pick<ItemRecord, 'meta' | 'feedback'>): Feedback | null {
+	if (!r.meta) return null;
+	return r.feedback?.find((f) => f.analyzed_at === r.meta!.analyzed_at) ?? null;
 }
 
 export type ReportStatus = 'queued' | 'generating' | 'done' | 'failed';

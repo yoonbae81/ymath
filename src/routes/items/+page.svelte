@@ -10,10 +10,16 @@
 	import { STATUS_LABEL, STATUS_TONE, hasActive } from '$lib/status';
 	import {
 		ERROR_TYPES,
+		FEEDBACK_ASKS_COMMENT,
+		FEEDBACK_CHOICES,
+		FEEDBACK_COMMENT_MAX,
+		FEEDBACK_LABEL,
 		PROVIDERS,
 		PROVIDER_LABEL,
+		currentFeedback,
 		getAvailablePeriods,
 		isItemInPeriod,
+		type FeedbackChoice,
 		type ItemRecord,
 		type Provider
 	} from '$lib/types';
@@ -23,6 +29,8 @@
 	let topic = $state('');
 	let workbook = $state('');
 	let errorType = $state('');
+	// 분석이 끝났는데 아직 반응을 남기지 않은 것만 본다
+	let onlyUnreviewed = $state(false);
 	// 처음에는 최근 10일만 보여 준다(지난 오답은 기간 선택으로 넓힌다). 상세 링크(?id=)는 기간 필터와 무관하게 열린다
 	let period = $state('10d');
 	let busy = $state(false);
@@ -40,16 +48,20 @@
 
 	const availablePeriods = $derived(getAvailablePeriods(data.items));
 
+	const unreviewed = (i: ItemRecord) => i.status === 'done' && !currentFeedback(i);
+	const unreviewedCount = $derived(data.items.filter(unreviewed).length);
+
 	const filtered = $derived(
 		data.items.filter(
 			(i) =>
 				(!topic || i.analysis?.classification.topic === topic) &&
 				(!workbook || i.workbook.id === workbook) &&
 				(!errorType || i.analysis?.error_analysis.error_type === errorType) &&
+				(!onlyUnreviewed || unreviewed(i)) &&
 				isItemInPeriod(i.created_at, period)
 		)
 	);
-	const filtering = $derived(!!(topic || workbook || errorType || period));
+	const filtering = $derived(!!(topic || workbook || errorType || onlyUnreviewed || period));
 
 	// 진행 중인 항목이 있으면 3초마다 새로 읽는다
 	$effect(() => {
@@ -58,20 +70,30 @@
 		return () => clearInterval(t);
 	});
 
+	// 분석 반응(라디오). 이미 남긴 답이 있으면 '수정'을 눌러야 다시 열린다
+	let fbChoice = $state<FeedbackChoice | null>(null);
+	let fbComment = $state('');
+	let fbEditing = $state(false);
+
 	function show(id: string | null) {
 		actionError = null;
 		providerChoice = null;
+		fbChoice = null;
+		fbComment = '';
+		fbEditing = false;
 		const url = new URL(page.url);
 		if (id) url.searchParams.set('id', id);
 		else url.searchParams.delete('id');
 		goto(url, { keepFocus: true, noScroll: true });
 	}
 
-	async function call(method: string, path: string, after?: () => void) {
+	async function call(method: string, path: string, after?: () => void, body?: unknown) {
 		busy = true;
 		actionError = null;
 		try {
-			const res = await fetch(path, { method, headers: { [AJAX_HEADER]: AJAX_VALUE } });
+			const headers: Record<string, string> = { [AJAX_HEADER]: AJAX_VALUE };
+			if (body !== undefined) headers['content-type'] = 'application/json';
+			const res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
 			if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { message?: string } | null)?.message ?? `요청 실패(${res.status})`);
 			after?.();
 			await invalidate('app:items');
@@ -83,6 +105,23 @@
 	}
 
 	const retry = (i: ItemRecord) => call('POST', `${base}/api/items/${i.id}/retry?provider=${chosenProvider(i)}`);
+	function editFeedback(i: ItemRecord) {
+		const f = currentFeedback(i);
+		fbChoice = f?.choice ?? null;
+		fbComment = f?.comment ?? '';
+		fbEditing = true;
+	}
+	const sendFeedback = (i: ItemRecord) =>
+		call(
+			'POST',
+			`${base}/api/items/${i.id}/feedback`,
+			() => {
+				fbEditing = false;
+				fbChoice = null;
+				fbComment = '';
+			},
+			{ choice: fbChoice, comment: fbChoice && FEEDBACK_ASKS_COMMENT.includes(fbChoice) ? fbComment : '' }
+		);
 	const remove = (i: ItemRecord) => {
 		if (confirm(`이 오답(${i.workbook.name})을 삭제할까요? 사진과 분석 결과가 모두 지워져요.`)) call('DELETE', `${base}/api/items/${i.id}`, () => show(null));
 	};
@@ -128,7 +167,10 @@
 	</div>
 </div>
 
-<p class="count">{filtering ? `${filtered.length} / ` : ''}총 {data.items.length}건</p>
+<div class="count">
+	<span>{filtering ? `${filtered.length} / ` : ''}총 {data.items.length}건{#if unreviewedCount} · 미확인 {unreviewedCount}건{/if}</span>
+	<label class="only-unreviewed"><input type="checkbox" bind:checked={onlyUnreviewed} /> 미확인</label>
+</div>
 
 {#if filtered.length === 0}
 	<p class="empty">{data.items.length === 0 ? '아직 올린 오답이 없어요.' : '조건에 맞는 오답이 없어요.'}</p>
@@ -151,6 +193,7 @@
 							<span class="badge {STATUS_TONE[i.status]}">{STATUS_LABEL[i.status]}</span>
 						{/if}
 						{#if i.flags.taxonomy_mismatch.length}<span class="badge warn">분류 확인</span>{/if}
+						{#if unreviewed(i)}<span class="badge bad">미확인</span>{/if}
 					</div>
 					<span class="badge date">{formatDate(i.created_at)}</span>
 				</div>
@@ -301,6 +344,45 @@
 					<p class="muted">패턴: {a.error_analysis.error_pattern_id}</p>
 				</section>
 
+				{#if open.status === 'done' && !readonly}
+					{@const done = currentFeedback(open)}
+					<section class="feedback">
+						<h3 class="band">오답노트 피드백</h3>
+						{#if done && !fbEditing}
+							<p class="fb-done">
+								<span class="badge ok">✓ 확인함</span>
+								{FEEDBACK_LABEL[done.choice]}
+								<button class="link" disabled={busy} onclick={() => editFeedback(open)}>수정</button>
+							</p>
+							{#if done.comment}<p class="muted">“{done.comment}”</p>{/if}
+						{:else}
+							<fieldset class="fb-choices" disabled={busy}>
+								<legend class="sr-only">분석에 대한 내 생각</legend>
+								{#each FEEDBACK_CHOICES as c (c)}
+									<label class="fb-choice" class:on={fbChoice === c}>
+										<span class="fb-icon">{FEEDBACK_LABEL[c].split(' ')[0]}</span>
+										<span class="fb-text">{FEEDBACK_LABEL[c].split(' ').slice(1).join(' ')}</span>
+										<input type="radio" name="feedback" value={c} bind:group={fbChoice} />
+									</label>
+								{/each}
+							</fieldset>
+							{#if fbChoice && FEEDBACK_ASKS_COMMENT.includes(fbChoice)}
+								<textarea
+									class="fb-comment"
+									rows="2"
+									maxlength={FEEDBACK_COMMENT_MAX}
+									placeholder={fbChoice === 'wrong_diagnosis' ? '어느 부분이 다른지 (선택)' : '어려운 부분 (선택)'}
+									bind:value={fbComment}
+								></textarea>
+							{/if}
+							<div class="fb-actions">
+								<button class="btn primary" disabled={busy || !fbChoice} onclick={() => sendFeedback(open)}>✅ 확인</button>
+								{#if done}<button class="btn" disabled={busy} onclick={() => (fbEditing = false)}>취소</button>{/if}
+							</div>
+						{/if}
+					</section>
+				{/if}
+
 				{#if open.meta}
 					<p class="muted">
 						{open.meta.provider ? `${PROVIDER_LABEL[open.meta.provider]} ` : ''}{open.meta.model} · 지침 {open.meta.prompt_version} · 신뢰도 {a.confidence} · {when(open.meta.analyzed_at || open.created_at)}
@@ -368,9 +450,26 @@
 		font-size: 0.95rem;
 	}
 	.count {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
 		color: var(--muted);
 		margin: 12px 2px 8px;
 		font-size: 0.9rem;
+	}
+	.only-unreviewed {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.only-unreviewed input {
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		accent-color: var(--accent);
 	}
 	.empty {
 		color: var(--muted);
@@ -712,6 +811,92 @@
 		color: var(--text);
 		font-size: 1rem;
 	}
+	.btn.primary {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
+	}
+	/* 5개를 폰에서도 한 줄에 가로로 놓는다: 아이콘 · 글자 · 라디오를 세로로 쌓은 칸 */
+	.fb-choices {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 6px;
+		border: none;
+		padding: 0;
+		margin: 12px 0 0;
+		min-width: 0;
+	}
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+	.fb-choice {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		padding: 10px 2px 8px;
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		cursor: pointer;
+		text-align: center;
+		white-space: nowrap;
+	}
+	.fb-choice.on {
+		border-color: var(--accent);
+		background: var(--accent-soft);
+	}
+	.fb-icon {
+		font-size: 1.3rem;
+		line-height: 1;
+	}
+	.fb-text {
+		font-size: 0.8rem;
+		font-weight: 600;
+	}
+	.fb-choice input {
+		width: 16px;
+		height: 16px;
+		margin: 2px 0 0;
+		accent-color: var(--accent);
+	}
+	.fb-comment {
+		width: 100%;
+		box-sizing: border-box;
+		margin-top: 10px;
+		padding: 10px 12px;
+		border-radius: 12px;
+		border: 1px solid var(--line);
+		background: var(--surface);
+		color: var(--text);
+		font: inherit;
+		resize: vertical;
+	}
+	.fb-actions {
+		display: flex;
+		gap: 10px;
+		margin-top: 12px;
+	}
+	.fb-done {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+	.link {
+		border: none;
+		background: none;
+		color: var(--accent);
+		font: inherit;
+		font-weight: 600;
+		text-decoration: underline;
+		cursor: pointer;
+		padding: 0;
+	}
 	.btn.danger {
 		color: var(--bad);
 	}
@@ -725,6 +910,7 @@
 		.count,
 		.list,
 		footer,
+		.feedback,
 		.close {
 			display: none !important;
 		}
