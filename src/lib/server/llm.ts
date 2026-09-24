@@ -102,6 +102,117 @@ export function codexErrorMessage(stderr: string): string {
 	return lines.filter((l) => l && !l.startsWith('hook:')).slice(-3).join(' | ').slice(0, 300);
 }
 
+export class QuotaExceededError extends Error {
+	constructor(message: string, public readonly status?: number) {
+		super(message);
+		this.name = 'QuotaExceededError';
+	}
+}
+
+export function isQuotaOrRateLimitError(err: unknown): boolean {
+	if (err instanceof QuotaExceededError) return true;
+	const msg = String(err instanceof Error ? err.message : err).toLowerCase();
+	return (
+		msg.includes('429') ||
+		msg.includes('quota') ||
+		msg.includes('rate limit') ||
+		msg.includes('rate_limit') ||
+		msg.includes('insufficient_quota') ||
+		msg.includes('resource_exhausted') ||
+		msg.includes('too many requests') ||
+		msg.includes('1301') ||
+		msg.includes('1302')
+	);
+}
+
+export function parseZaiOutput(text: string): unknown {
+	const body = text
+		.trim()
+		.replace(/^```(?:json)?\s*/i, '')
+		.replace(/\s*```$/, '');
+	try {
+		return JSON.parse(body);
+	} catch {
+		throw new Error(`zai 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
+	}
+}
+
+async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
+	const s = settings();
+	const endpoint = `${s.zaiBaseUrl.replace(/\/+$/, '')}/chat/completions`;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), s.analyzeTimeoutMs);
+
+	const promptWithSchema = `${c.prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(c.schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
+
+	try {
+		const res = await fetch(endpoint, {
+			method: 'POST',
+			headers: {
+				Authorization: `Bearer ${s.zaiApiKey}`,
+				'Content-Type': 'application/json'
+			},
+			body: JSON.stringify({
+				model: s.zaiModel,
+				messages: [
+					{
+						role: 'system',
+						content:
+							'당신은 학생의 수학 오답을 전문적으로 분석하고 코칭하는 수학 교육 전문가입니다. 주어진 JSON Schema를 엄격히 준수하여 순수 JSON 객체 하나만 출력하십시오. 마크다운 코드 블록이나 다른 텍스트는 일체 출력하지 마세요.'
+					},
+					{
+						role: 'user',
+						content: promptWithSchema
+					}
+				],
+				response_format: { type: 'json_object' },
+				thinking: { type: 'disabled' },
+				max_tokens: 4096,
+				temperature: 0.2
+			}),
+			signal: controller.signal
+		});
+
+		clearTimeout(timer);
+
+		if (res.status === 429) {
+			const errText = await res.text().catch(() => '');
+			throw new QuotaExceededError(`z.ai 요청 한도 초과(HTTP 429): ${errText.slice(0, 200)}`, 429);
+		}
+
+		if (!res.ok) {
+			const errText = await res.text().catch(() => '');
+			if (isQuotaOrRateLimitError(errText)) {
+				throw new QuotaExceededError(`z.ai 할당량 소진 또는 제한(${res.status}): ${errText.slice(0, 200)}`, res.status);
+			}
+			throw new Error(`z.ai API 오류(${res.status}): ${errText.slice(0, 300)}`);
+		}
+
+		const data = (await res.json()) as any;
+		if (data.error) {
+			const msg = typeof data.error === 'string' ? data.error : data.error.message || JSON.stringify(data.error);
+			if (isQuotaOrRateLimitError(msg)) {
+				throw new QuotaExceededError(`z.ai 할당량 소진: ${msg.slice(0, 200)}`);
+			}
+			throw new Error(`z.ai 응답 오류: ${msg.slice(0, 300)}`);
+		}
+
+		const choice = data.choices?.[0];
+		const content = choice?.message?.content ?? '';
+		if (!content.trim()) {
+			throw new Error(`z.ai 응답 내용이 비었음 (finish_reason: ${choice?.finish_reason})`);
+		}
+
+		return { output: parseZaiOutput(content), model: s.zaiModel };
+	} catch (e: any) {
+		clearTimeout(timer);
+		if (e.name === 'AbortError') {
+			throw new Error(`분석 시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
+		}
+		throw e;
+	}
+}
+
 async function structuredWithClaude(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	const r = await exec(
@@ -223,6 +334,7 @@ async function structuredWithAgy(c: StructuredCall): Promise<LlmOutput> {
 
 /** 지정한 LLM 으로 사진을 분석해 구조화된 결과를 받는다. */
 export function runStructured(provider: Provider, call: StructuredCall): Promise<LlmOutput> {
+	if (provider === 'zai') return structuredWithZai(call);
 	if (provider === 'codex') return structuredWithCodex(call);
 	if (provider === 'agy') return structuredWithAgy(call);
 	return structuredWithClaude(call);
@@ -231,6 +343,45 @@ export function runStructured(provider: Provider, call: StructuredCall): Promise
 /** 텍스트만 주고받는 호출(사진·스키마 없음). 보고서 작성처럼 프롬프트 → 본문만 필요한 곳에서 쓴다. */
 export async function runText(provider: Provider, prompt: string): Promise<{ text: string; model: string }> {
 	const s = settings();
+	if (provider === 'zai') {
+		const endpoint = `${s.zaiBaseUrl.replace(/\/+$/, '')}/chat/completions`;
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), s.analyzeTimeoutMs);
+		try {
+			const res = await fetch(endpoint, {
+				method: 'POST',
+				headers: {
+					Authorization: `Bearer ${s.zaiApiKey}`,
+					'Content-Type': 'application/json'
+				},
+				body: JSON.stringify({
+					model: s.zaiModel,
+					messages: [{ role: 'user', content: prompt }],
+					thinking: { type: 'disabled' },
+					max_tokens: 4096,
+					temperature: 0.2
+				}),
+				signal: controller.signal
+			});
+			clearTimeout(timer);
+			if (res.status === 429) {
+				throw new QuotaExceededError('z.ai 요청 한도 초과(429)', 429);
+			}
+			if (!res.ok) {
+				const errText = await res.text().catch(() => '');
+				if (isQuotaOrRateLimitError(errText)) throw new QuotaExceededError(`z.ai 할당량 소진: ${errText.slice(0, 200)}`);
+				throw new Error(`z.ai 오류(${res.status}): ${errText.slice(0, 300)}`);
+			}
+			const data = (await res.json()) as any;
+			const text = data.choices?.[0]?.message?.content?.trim() ?? '';
+			if (!text) throw new Error('z.ai 응답이 비었음');
+			return { text, model: s.zaiModel };
+		} catch (e: any) {
+			clearTimeout(timer);
+			if (e.name === 'AbortError') throw new Error(`시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
+			throw e;
+		}
+	}
 	if (provider === 'claude') {
 		const r = await exec(s.claudeBin, ['-p', '--model', s.claudeModel, '--no-session-persistence'], {
 			input: prompt,

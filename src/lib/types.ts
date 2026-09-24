@@ -1,7 +1,7 @@
 /** 분석에 쓸 수 있는 LLM */
-export const PROVIDERS = ['claude', 'codex', 'agy'] as const;
+export const PROVIDERS = ['zai', 'claude', 'codex', 'agy'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { claude: 'Claude', codex: 'Codex', agy: 'Agy (Gemini)' };
+export const PROVIDER_LABEL: Record<Provider, string> = { zai: 'GLM 5.3 (Z.AI)', claude: 'Claude', codex: 'Codex', agy: 'Agy (Gemini)' };
 
 export type Status = 'queued' | 'ocr' | 'analyzing' | 'done' | 'failed';
 

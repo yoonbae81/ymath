@@ -15,7 +15,10 @@ export const settings = () => ({
 	/** 분석에 쓰는 LLM 기본값. 재분석 때 항목별로 바꿀 수 있다 */
 	provider: (PROVIDERS as readonly string[]).includes(process.env.ANALYZE_PROVIDER ?? '')
 		? (process.env.ANALYZE_PROVIDER as Provider)
-		: ('claude' as Provider),
+		: ('zai' as Provider),
+	zaiApiKey: process.env.ZAI_API_KEY ?? '48383d54493740bfb16a6a87b4547240.j4vooPFkXEVEkYtl',
+	zaiBaseUrl: process.env.ZAI_BASE_URL ?? 'https://api.z.ai/api/coding/paas/v4',
+	zaiModel: process.env.ANALYZE_MODEL ?? process.env.ZAI_MODEL ?? 'glm-5.3',
 	claudeBin: process.env.CLAUDE_BIN ?? 'claude',
 	claudeModel: process.env.ANALYZE_MODEL ?? 'sonnet',
 	codexBin: process.env.CODEX_BIN ?? 'codex',

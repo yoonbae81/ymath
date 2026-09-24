@@ -79,7 +79,9 @@ export function buildPrompt(p: {
 			: p.provider === 'agy'
 				? // agy 는 헤드리스에서 셸 명령이 자동 거부되는데, 사진을 열기 전에 pwd/ls 부터 하려는 습관이 있어 도구를 못 박아 준다
 					`- 사진 파일: ${p.imagePath}  ← 셸 명령(run_command)은 절대 쓰지 말고 view_file 도구로 이 파일을 직접 열어 보세요`
-				: `- 사진 파일: ${p.imagePath}  ← Read 도구로 반드시 직접 열어 보세요`,
+				: p.provider === 'zai'
+					? '- 문제 정보: 제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요.'
+					: `- 사진 파일: ${p.imagePath}  ← Read 도구로 반드시 직접 열어 보세요`,
 		'',
 		'## OCR 텍스트 (참고용, 오류 가능)',
 		ocr,

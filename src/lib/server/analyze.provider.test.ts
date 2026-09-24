@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,8 +27,26 @@ beforeEach(() => {
 	process.env.CODEX_BIN = makeFakeCli('codex');
 	process.env.CLAUDE_BIN = makeFakeCli('claude');
 	process.env.AGY_BIN = makeFakeCli('agy');
+	vi.stubGlobal(
+		'fetch',
+		vi.fn(async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({
+				choices: [
+					{
+						message: {
+							content: JSON.stringify(validAnalysis())
+						}
+					}
+				]
+			}),
+			text: async () => ''
+		}))
+	);
 });
 afterEach(() => {
+	vi.restoreAllMocks();
 	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CLAUDE_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
@@ -36,7 +54,14 @@ afterEach(() => {
 const run = (r: ItemRecord) => analyzeItem({ record: r, dir: work, ocrText: '$x$' });
 
 describe('분석 LLM 선택', () => {
-	it('기본값은 claude', async () => {
+	it('기본값은 zai', async () => {
+		expect(providerFor(record())).toBe('zai');
+		const res = await run(record());
+		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3' });
+	});
+
+	it('ANALYZE_PROVIDER=claude 로 서버 기본값을 바꾼다', async () => {
+		process.env.ANALYZE_PROVIDER = 'claude';
 		expect(providerFor(record())).toBe('claude');
 		const res = await run(record());
 		expect(res).toMatchObject({ provider: 'claude', model: 'sonnet' });
@@ -88,11 +113,38 @@ describe('분석 LLM 선택', () => {
 		expect(Buffer.byteLength(log().promptArg, 'utf8')).toBeLessThan(AGY_MAX_PROMPT_BYTES * 0.6);
 	});
 
-	it('ANALYZE_PROVIDER=agy 로 기본값을 바꾸고, 알 수 없는 값은 claude 로 둔다', async () => {
+	it('ANALYZE_PROVIDER=agy 로 기본값을 바꾸고, 알 수 없는 값은 zai 로 둔다', async () => {
 		process.env.ANALYZE_PROVIDER = 'agy';
 		expect(providerFor(record())).toBe('agy');
 		process.env.ANALYZE_PROVIDER = 'gemini';
-		expect(providerFor(record())).toBe('claude');
+		expect(providerFor(record())).toBe('zai');
+	});
+
+	it('zai 로 분석하면 z.ai 엔드포인트를 호출하고 OCR 안내가 프롬프트에 들어간다', async () => {
+		let capturedBody: any;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, opts: any) => {
+				capturedBody = JSON.parse(opts.body);
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						choices: [
+							{
+								message: {
+									content: JSON.stringify(validAnalysis())
+								}
+							}
+						]
+					})
+				} as any;
+			})
+		);
+		const res = await run(record('zai'));
+		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3', taxonomyIssues: [], guardrailWarnings: [] });
+		expect(capturedBody.model).toBe('glm-5.3');
+		expect(capturedBody.messages[1].content).toContain('제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요');
 	});
 
 	it('agy 결과에도 스키마 검증과 정답 노출 가드레일이 적용된다', async () => {

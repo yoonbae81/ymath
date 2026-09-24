@@ -19,7 +19,7 @@ import {
 	isPastMonthPeriod
 } from '$lib/types';
 import { dataDir, loadWorkbooks, promptsDir, renderPrompt, settings } from './config';
-import { exec } from './exec';
+import { runText } from './llm';
 import { listRecords, UNCONFIRMED_PATTERN_ID } from './store';
 import { loadTaxonomy } from './taxonomy';
 
@@ -355,18 +355,14 @@ export class ReportQueue {
 			const promptVersion = createHash('sha1').update(guideline).digest('hex').slice(0, 8);
 
 			let markdown: string;
+			let usedModel = settings().claudeModel;
 			if (this.runner) {
 				markdown = await this.runner(prompt);
 			} else {
 				const s = settings();
-				const res = await exec(s.claudeBin, ['-p', '--model', s.claudeModel], {
-					input: prompt,
-					timeoutMs: 300000
-				});
-				if (res.code !== 0) {
-					throw new Error(`claude 보고서 작성 실패(code ${res.code}): ${res.stderr.trim().slice(-300)}`);
-				}
-				markdown = res.stdout.trim();
+				const res = await runText(s.provider, prompt);
+				markdown = res.text;
+				usedModel = res.model;
 			}
 
 			// LLM 이 문제집 이름(특히 학기)을 잘못 조합한 곳을 실제 이름으로 바로잡는다(A 로 줄이되 100%는 아니므로)
@@ -386,7 +382,6 @@ export class ReportQueue {
 				console.warn(`[report-queue] ${id} 문제집 이름 ${fix.corrections.length}곳 교정: ${fix.corrections.map((c) => `${c.number} ${c.from}→${c.to}`).join(', ')}`);
 			if (fix.stray.length) console.warn(`[report-queue] ${id} 이 보고서와 무관한 문제집 표기: ${fix.stray.join(', ')}`);
 
-			const s = settings();
 			const updated = updateReport(id, (rec) => {
 				rec.status = 'done';
 				rec.error = null;
@@ -395,7 +390,7 @@ export class ReportQueue {
 				rec.summary = summary;
 				rec.markdown = markdown;
 				rec.meta = {
-					model: s.claudeModel,
+					model: usedModel,
 					prompt_version: promptVersion,
 					generated_at: new Date().toISOString(),
 					...(fix.corrections.length ? { workbook_corrections: fix.corrections.length } : {}),

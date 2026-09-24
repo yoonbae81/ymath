@@ -3,8 +3,12 @@ import { join } from 'node:path';
 import { ACTIVE_STATUSES } from '$lib/types';
 import { analyzeItem, type Analyzer } from './analyze';
 import { settings } from './config';
+import { isQuotaOrRateLimitError } from './llm';
 import { runOcr } from './ocr';
 import { itemDir, listRecords, readRecord, updateRecord } from './store';
+
+/** 할당량 소진 또는 429 오류 시 재시도 대기 시간 (기본 10분) */
+export const quotaRetryDelayMs = () => Number(process.env.QUOTA_RETRY_DELAY_MS ?? 10 * 60_000);
 
 export interface QueueDeps {
 	ocr: (dir: string) => Promise<string>;
@@ -105,6 +109,19 @@ export class JobQueue {
 				});
 				return;
 			} catch (e) {
+				if (isQuotaOrRateLimitError(e)) {
+					const delayMs = quotaRetryDelayMs();
+					console.warn(`[queue] ${id} 429 또는 사용량 할당량 소진 감지. ${Math.round(delayMs / 60_000)}분 뒤 다시 시도합니다: ${(e as Error).message}`);
+					updateRecord(id, (r) => {
+						r.status = 'queued';
+						r.attempts = Math.max(0, r.attempts - 1);
+						r.error = `API 할당량 초과 또는 요청 제한(429)으로 ${Math.round(delayMs / 60_000)}분 후 자동으로 다시 시도합니다.`;
+					});
+					setTimeout(() => {
+						this.enqueue(id);
+					}, delayMs);
+					return;
+				}
 				lastError = e instanceof Error ? e.message : String(e);
 				console.warn(`[queue] ${id} 분석 실패(${attempt}/${this.deps.maxAttempts}): ${lastError}`);
 			}

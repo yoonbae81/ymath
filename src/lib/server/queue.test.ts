@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JobQueue, type QueueDeps } from './queue';
+import { QuotaExceededError } from './llm';
 import { createItem, itemDir, readRecord, updateRecord } from './store';
 import type { Analysis, Status } from '$lib/types';
 
@@ -232,5 +233,37 @@ describe('JobQueue', () => {
 		q.enqueue('20260101-000000-zzzz');
 		await q.idle();
 		expect(calls).toBe(0);
+	});
+
+	it('429나 할당량 소진 시 failed로 끝내지 않고 queued 상태로 지연 후 재시도한다', async () => {
+		process.env.QUOTA_RETRY_DELAY_MS = '50';
+		let calls = 0;
+		const q = new JobQueue({
+			ocr: async () => 'x',
+			analyze: async () => {
+				calls++;
+				if (calls === 1) throw new QuotaExceededError('rate limit 429', 429);
+				return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+			},
+			maxAttempts: 2
+		});
+		const item = createItem(WB);
+		q.enqueue(item.id);
+		await q.idle();
+
+		// 1차 시도 직후: 429 감지되어 queued 상태 유지 및 지연 대기
+		let r = readRecord(item.id)!;
+		expect(r.status).toBe('queued');
+		expect(r.error).toContain('429');
+
+		// 지연 타이머 만료 후 재시도 확인
+		await new Promise((resolve) => setTimeout(resolve, 80));
+		await q.idle();
+
+		r = readRecord(item.id)!;
+		expect(r.status).toBe('done');
+		expect(r.error).toBeNull();
+		expect(calls).toBe(2);
+		delete process.env.QUOTA_RETRY_DELAY_MS;
 	});
 });
