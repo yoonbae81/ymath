@@ -12,7 +12,7 @@ export default defineConfig({
 			// 빌드 결과는 숨김 폴더로 둬서 프로젝트 루트를 어지럽히지 않는다(실행: node .build)
 			adapter: adapter({ out: '.build' }),
 			// 루트에서 서빙한다. BASE_PATH 를 주면 하위 경로로 빌드 가능(빌드 시점 고정)
-			paths: { base: (process.env.BASE_PATH ?? '') as '' | `/${string}` },
+			paths: { base: (process.env.BASE_PATH ?? '/math') as '' | `/${string}` },
 			// OWASP ASVS V3.4.3: CSP 는 SvelteKit 이 페이지 응답에 설정한다(hash 모드가 인라인 부트스트랩
 			// 스크립트에 sha256 을 첨부하므로 script-src 에 'unsafe-inline' 이 필요 없다).
 			// script-src 'unsafe-inline' 제거는 hooks.server.ts 의 fallback Csp 와 함께 동작한다.
