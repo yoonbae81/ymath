@@ -11,6 +11,8 @@ import { POST as upload } from './upload/+server';
 import { DELETE as remove } from './items/[id]/+server';
 import { POST as retry } from './items/[id]/retry/+server';
 import { POST as feedback } from './items/[id]/feedback/+server';
+import { POST as viewed } from './items/[id]/viewed/+server';
+import { POST as favorite } from './items/[id]/favorite/+server';
 import { createItem, itemDir, readRecord, updateRecord } from '$lib/server/store';
 import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 import { currentFeedback, type Analysis } from '$lib/types';
@@ -268,5 +270,82 @@ describe('POST /api/items/[id]/feedback', () => {
 		await expect(send(id, { choice: 'accurate' }, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
 		await expect(send('../../etc', { choice: 'accurate' })).rejects.toMatchObject({ status: 400 });
 		expect(readRecord(id)!.feedback).toBeUndefined();
+	});
+});
+
+describe('POST /api/items/[id]/viewed', () => {
+	const send = async (id: string, headers: Record<string, string> = { ...AJAX }) =>
+		viewed(ev(post(`/api/items/${id}/viewed`, headers), { id }));
+	const analyzed = () => {
+		const r = createItem(WB);
+		updateRecord(r.id, (x) => {
+			x.status = 'done';
+			x.analysis = { asks: '…' } as unknown as Analysis;
+			x.meta = { provider: 'claude', model: 'sonnet', prompt_version: 'abc123', analyzed_at: '2026-09-20T00:00:00.000Z' };
+		});
+		return r.id;
+	};
+
+	it('확인 시각을 기록하고, 다시 열면 새 시각으로 덮어쓴다', async () => {
+		const id = analyzed();
+		const res = await send(id);
+		expect(res.status).toBe(200);
+		const first = (await res.json()).viewed_at as string;
+		expect(readRecord(id)!.viewed_at).toBe(first);
+
+		const res2 = await send(id);
+		const second = (await res2.json()).viewed_at as string;
+		expect(new Date(second).getTime()).toBeGreaterThanOrEqual(new Date(first).getTime());
+		expect(readRecord(id)!.viewed_at).toBe(second);
+	});
+
+	it('분석이 없거나 끝나지 않은 항목은 409, 없는 항목은 404', async () => {
+		await expect(send('20260101-000000-zzzz')).rejects.toMatchObject({ status: 404 });
+		await expect(send(createItem(WB).id)).rejects.toMatchObject({ status: 409 });
+		const queued = createItem(WB);
+		updateRecord(queued.id, (x) => {
+			x.status = 'done';
+		});
+		await expect(send(queued.id)).rejects.toMatchObject({ status: 409 });
+	});
+
+	it('커스텀 헤더가 없으면 403, 잘못된 ID 는 400', async () => {
+		const id = analyzed();
+		await expect(send(id, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
+		await expect(send('../../etc')).rejects.toMatchObject({ status: 400 });
+		expect(readRecord(id)!.viewed_at ?? null).toBeNull();
+	});
+});
+
+describe('POST /api/items/[id]/favorite', () => {
+	const send = async (id: string, body: unknown, headers: Record<string, string> = { ...AJAX, 'content-type': 'application/json' }) =>
+		favorite(ev(post(`/api/items/${id}/favorite`, headers, JSON.stringify(body)), { id }));
+
+	it('즐겨찾기를 설정하고 다시 누르면 해제된다', async () => {
+		const id = createItem(WB).id;
+		const res = await send(id, { favorite: true });
+		expect(res.status).toBe(200);
+		expect(readRecord(id)!.favorite).toBe(true);
+		await send(id, { favorite: false });
+		expect(readRecord(id)!.favorite).toBe(false);
+	});
+
+	it('분석 전 항목도 즐겨찾을 수 있다', async () => {
+		const queued = createItem(WB).id;
+		const res = await send(queued, { favorite: true });
+		expect(res.status).toBe(200);
+		expect(readRecord(queued)!.favorite).toBe(true);
+	});
+
+	it('본문이 참/거짓이 아니면 400', async () => {
+		const id = createItem(WB).id;
+		await expect(send(id, {})).rejects.toMatchObject({ status: 400 });
+		await expect(send(id, { favorite: 'yes' })).rejects.toMatchObject({ status: 400 });
+	});
+
+	it('커스텀 헤더가 없으면 403, 없는 항목은 404', async () => {
+		const id = createItem(WB).id;
+		await expect(send(id, { favorite: true }, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
+		await expect(send('20260101-000000-zzzz', { favorite: true })).rejects.toMatchObject({ status: 404 });
 	});
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatDate, formatDateTime, formatDateTimeSeconds, formatTime } from './time';
+import { formatDate, formatDateTime, formatDateTimeFull, formatDateTimeSeconds, formatTime } from './time';
 
 const KST = { timeZone: 'Asia/Seoul' };
 
@@ -34,5 +34,9 @@ describe('시각은 24시간제로 보인다', () => {
 		const iso = '2026-09-19T09:05:09.000Z';
 		expect(formatDate(iso, KST)).toBe('09/19');
 		expect(formatDate(iso, KST)).not.toContain(':');
+	});
+
+	it('formatDateTimeFull 은 연월일까지 yyyy-mm-dd HH:mm 로 돌려준다', () => {
+		expect(formatDateTimeFull('2026-09-19T09:05:09.000Z', KST)).toBe('2026-09-19 18:05');
 	});
 });

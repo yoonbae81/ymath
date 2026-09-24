@@ -113,6 +113,10 @@ export interface ItemRecord {
 	meta: { provider?: Provider; model: string; prompt_version: string; analyzed_at: string } | null;
 	/** 분석 결과에 대한 학생 반응. 재분석해도 지우지 않고, 같은 분석에 다시 답하면 덮어쓴다 */
 	feedback?: Feedback[];
+	/** 오답분석 화면을 마지막으로 연 시각. 가족이 상세를 열 때마다 덮어쓴다. 없으면 아직 확인하지 않은 것 */
+	viewed_at?: string | null;
+	/** 나중에 다시 볼 오답 표시. 목록에서 별로 보이고 즐겨찾기만 골라 볼 수 있다. 재분석해도 유지한다 */
+	favorite?: boolean;
 }
 
 /** 지금 보이는 분석에 남긴 반응. 재분석으로 분석이 바뀌었으면 없는 것으로 본다 */

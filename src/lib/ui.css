@@ -208,7 +208,8 @@
 	color: var(--bad);
 }
 .badge.period,
-.badge.date {
+.badge.date,
+.badge.viewed {
 	background: var(--bg);
 	border: 1px solid var(--line);
 	color: var(--muted);

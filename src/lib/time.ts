@@ -10,6 +10,7 @@ function getParts(iso: string, o: Opts = {}) {
 	const d = new Date(iso);
 	const f = new Intl.DateTimeFormat('en-US', {
 		timeZone: o.timeZone,
+		year: 'numeric',
 		month: '2-digit',
 		day: '2-digit',
 		hour: '2-digit',
@@ -42,4 +43,10 @@ export function formatTime(iso: string, o: Opts = {}): string {
 export function formatDate(iso: string, o: Opts = {}): string {
 	const p = getParts(iso, o);
 	return `${p.month}/${p.day}`;
+}
+
+/** 2026-09-20 18:05 (확인 기록처럼 연월일까지 필요한 곳) */
+export function formatDateTimeFull(iso: string, o: Opts = {}): string {
+	const p = getParts(iso, o);
+	return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;
 }

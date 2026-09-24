@@ -5,7 +5,7 @@
 	import { page } from '$app/state';
 	import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 	import { renderMath, renderMarkdown } from '$lib/math';
-	import { formatDate, formatDateTime } from '$lib/time';
+	import { formatDate, formatDateTime, formatDateTimeFull } from '$lib/time';
 	import { problemNumber } from '$lib/report-links';
 	import { STATUS_LABEL, STATUS_TONE, hasActive } from '$lib/status';
 	import {
@@ -31,6 +31,8 @@
 	let errorType = $state('');
 	// 분석이 끝났는데 아직 반응을 남기지 않은 것만 본다
 	let onlyUnreviewed = $state(false);
+	// 즐겨찾기(나중에 다시 볼 오답)만 본다
+	let onlyFavorite = $state(false);
 	// 처음에는 최근 10일만 보여 준다(지난 오답은 기간 선택으로 넓힌다). 상세 링크(?id=)는 기간 필터와 무관하게 열린다
 	let period = $state('10d');
 	let busy = $state(false);
@@ -50,6 +52,7 @@
 
 	const unreviewed = (i: ItemRecord) => i.status === 'done' && !currentFeedback(i);
 	const unreviewedCount = $derived(data.items.filter(unreviewed).length);
+	const favoriteCount = $derived(data.items.filter((i) => i.favorite).length);
 
 	const filtered = $derived(
 		data.items.filter(
@@ -58,10 +61,11 @@
 				(!workbook || i.workbook.id === workbook) &&
 				(!errorType || i.analysis?.error_analysis.error_type === errorType) &&
 				(!onlyUnreviewed || unreviewed(i)) &&
+				(!onlyFavorite || i.favorite) &&
 				isItemInPeriod(i.created_at, period)
 		)
 	);
-	const filtering = $derived(!!(topic || workbook || errorType || onlyUnreviewed || period));
+	const filtering = $derived(!!(topic || workbook || errorType || onlyUnreviewed || onlyFavorite || period));
 
 	// 진행 중인 항목이 있으면 3초마다 새로 읽는다
 	$effect(() => {
@@ -70,10 +74,41 @@
 		return () => clearInterval(t);
 	});
 
+	// 오답분석을 열면 확인 시각을 기록한다. 한 번 열 때 하나만 기록하고, 닫았다 다시 열면 다시 기록한다. 게스트(공유 링크)는 기록하지 않는다
+	let markedViewId = $state<string | null>(null);
+	$effect(() => {
+		if (!openId) {
+			markedViewId = null;
+			return;
+		}
+		const i = open;
+		if (readonly || !i || i.status !== 'done' || !i.analysis || markedViewId === i.id) return;
+		markedViewId = i.id;
+		markViewed(i.id);
+	});
+
+	async function markViewed(id: string) {
+		try {
+			const res = await fetch(`${base}/api/items/${id}/viewed`, { method: 'POST', headers: { [AJAX_HEADER]: AJAX_VALUE } });
+			// 기록에 실패해도 화면은 그대로 쓴다. 다음에 다시 열 때 기록된다
+			if (res.ok) await invalidate('app:items');
+		} catch {
+			// 네트워크 오류도 마찬가지로 조용히 넘긴다
+		}
+	}
+
 	// 분석 반응(라디오). 이미 남긴 답이 있으면 '수정'을 눌러야 다시 열린다
 	let fbChoice = $state<FeedbackChoice | null>(null);
 	let fbComment = $state('');
 	let fbEditing = $state(false);
+
+	// 페이지를 연 직후 바로 저장하는 것을 막는 최소 읽기 시간. 그 전에는 결과를 골라도 확인이 비활성 상태로 남는다(별도 안내는 없음)
+	const FEEDBACK_DWELL_MS = 40_000;
+	let feedbackUnlocked = $state(false);
+	$effect(() => {
+		const t = setTimeout(() => (feedbackUnlocked = true), FEEDBACK_DWELL_MS);
+		return () => clearTimeout(t);
+	});
 
 	function show(id: string | null) {
 		actionError = null;
@@ -105,6 +140,23 @@
 	}
 
 	const retry = (i: ItemRecord) => call('POST', `${base}/api/items/${i.id}/retry?provider=${chosenProvider(i)}`);
+	// 별은 눌리자마자 채워지게(터치 피드백) 서버 저장을 기다리지 않는다. 저장에 실패하면 되돌린다
+	async function toggleFavorite(i: ItemRecord) {
+		const target = !i.favorite;
+		i.favorite = target;
+		try {
+			const res = await fetch(`${base}/api/items/${i.id}/favorite`, {
+				method: 'POST',
+				headers: { [AJAX_HEADER]: AJAX_VALUE, 'content-type': 'application/json' },
+				body: JSON.stringify({ favorite: target })
+			});
+			if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { message?: string } | null)?.message ?? `요청 실패(${res.status})`);
+			await invalidate('app:items');
+		} catch (e) {
+			i.favorite = !target;
+			actionError = e instanceof Error ? e.message : '즐겨찾기를 저장하지 못했어요';
+		}
+	}
 	function editFeedback(i: ItemRecord) {
 		const f = currentFeedback(i);
 		fbChoice = f?.choice ?? null;
@@ -168,8 +220,9 @@
 </div>
 
 <div class="count">
-	<span>{filtering ? `${filtered.length} / ` : ''}총 {data.items.length}건{#if unreviewedCount} · 미확인 {unreviewedCount}건{/if}</span>
+	<span>{filtering ? `${filtered.length} / ` : ''}총 {data.items.length}건{#if unreviewedCount} · 미확인 {unreviewedCount}건{/if}{#if favoriteCount} · 즐겨찾기 {favoriteCount}건{/if}</span>
 	<label class="only-unreviewed"><input type="checkbox" bind:checked={onlyUnreviewed} /> 미확인</label>
+	<label class="only-unreviewed only-favorite" title="즐겨찾기만 보기"><input type="checkbox" bind:checked={onlyFavorite} aria-label="즐겨찾기만 보기" /><span class="star" class:on={onlyFavorite}>★</span></label>
 </div>
 
 {#if filtered.length === 0}
@@ -194,6 +247,7 @@
 						{/if}
 						{#if i.flags.taxonomy_mismatch.length}<span class="badge warn">분류 확인</span>{/if}
 						{#if unreviewed(i)}<span class="badge bad">미확인</span>{/if}
+						{#if i.favorite}<span class="badge fav-star" title="즐겨찾기">★</span>{/if}
 					</div>
 					<span class="badge date">{formatDate(i.created_at)}</span>
 				</div>
@@ -231,13 +285,31 @@
 							<span class="badge warn">분류 확인</span>
 						{/if}
 						<span class="badge date">{formatDate(open.created_at)}</span>
+						{#if a && open.viewed_at}
+							<span class="badge viewed" title="이 오답분석을 마지막으로 열 때의 시각">마지막 확인 {formatDateTimeFull(open.viewed_at)}</span>
+						{/if}
 					</div>
 				</div>
 				<button class="close" aria-label="닫기" onclick={() => show(null)}>✕</button>
 			</header>
 
 			{#if showPhotos}
-				<a href="{base}/api/items/{open.id}/image" target="_blank" rel="noreferrer"><img class="photo" src="{base}/api/items/{open.id}/image" alt="오답 사진" /></a>
+				<div class="photo-box">
+					<img class="photo" src="{base}/api/items/{open.id}/image" alt="오답 사진" />
+					{#if !readonly}
+						<button
+							type="button"
+							class="fav-toggle"
+							class:on={open.favorite}
+							onclick={() => toggleFavorite(open)}
+							aria-pressed={!!open.favorite}
+							aria-label={open.favorite ? '즐겨찾기 해제' : '즐겨찾기에 추가'}
+							title={open.favorite ? '즐겨찾기 해제' : '즐겨찾기에 추가'}
+						>★</button>
+					{:else if open.favorite}
+						<span class="fav-toggle on" title="즐겨찾기">★</span>
+					{/if}
+				</div>
 			{/if}
 
 			{#if open.status === 'failed'}
@@ -330,7 +402,7 @@
 						{/if}
 						<li><strong>다 풀고 스스로 확인:</strong> <span class="md">{@html renderMath(a.error_analysis.self_check)}</span></li>
 						{#if a.error_analysis.prerequisites.length}
-							<li><strong>먼저 알아야 할 것:</strong> {a.error_analysis.prerequisites.join(' · ')}</li>
+							<li><strong>먼저 알아야 할 것:</strong> <span class="md">{@html renderMath(a.error_analysis.prerequisites.join(' · '))}</span></li>
 						{/if}
 						{#if a.error_analysis.root_cause_concept_ids.length}
 							<li>
@@ -470,6 +542,18 @@
 		height: 16px;
 		margin: 0;
 		accent-color: var(--accent);
+	}
+	.only-favorite .star {
+		color: var(--muted);
+		font-size: 15px;
+		line-height: 1;
+	}
+	.only-favorite .star.on {
+		color: var(--warn);
+	}
+	.badge.fav-star {
+		background: var(--warn-soft);
+		color: var(--warn);
 	}
 	.empty {
 		color: var(--muted);
@@ -624,6 +708,42 @@
 		border: 1px solid var(--line);
 		background: #fff;
 		margin-bottom: 8px;
+	}
+	.photo-box {
+		position: relative;
+		margin-bottom: 8px;
+	}
+	.photo-box .photo {
+		margin-bottom: 0;
+	}
+	.fav-toggle {
+		position: absolute;
+		top: 8px;
+		right: 8px;
+		width: 40px;
+		height: 40px;
+		border-radius: 10px;
+		border: 1px solid var(--line);
+		background: rgb(255 255 255 / 0.88);
+		color: var(--muted);
+		font-size: 17px;
+		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		padding: 0;
+	}
+	.fav-toggle:active {
+		transform: scale(0.92);
+	}
+	.fav-toggle.on {
+		color: var(--warn);
+		border-color: var(--warn);
+		background: var(--warn-soft);
+	}
+	span.fav-toggle {
+		cursor: default;
 	}
 	/* 카드 테두리 대신 구분 띠(.band, ui.css)로 나눈다 */
 	.sheet section {
