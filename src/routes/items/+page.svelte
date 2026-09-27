@@ -19,6 +19,7 @@
 		currentFeedback,
 		getAvailablePeriods,
 		isItemInPeriod,
+		providerLabel,
 		type FeedbackChoice,
 		type ItemRecord,
 		type Provider
@@ -457,7 +458,7 @@
 
 				{#if open.meta}
 					<p class="muted">
-						{open.meta.provider ? `${PROVIDER_LABEL[open.meta.provider]} ` : ''}{open.meta.model} · 지침 {open.meta.prompt_version} · 신뢰도 {a.confidence} · {when(open.meta.analyzed_at || open.created_at)}
+						{open.meta.provider ? `${providerLabel(open.meta.provider)} ` : ''}{open.meta.model} · 지침 {open.meta.prompt_version} · 신뢰도 {a.confidence} · {when(open.meta.analyzed_at || open.created_at)}
 					</p>
 				{:else}
 					<p class="muted">{when(open.created_at)}</p>
