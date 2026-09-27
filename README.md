@@ -56,11 +56,12 @@
 
 ## LLM 선택 (GLM / Codex / Agy)
 
-- 기본은 `ANALYZE_PROVIDER`(`zai` | `codex` | `agy`, 기본 zai — GLM 5.3). `/items`의 상세에서 **다시 분석** 옆 선택 상자로 항목마다 LLM을 골라 재분석할 수 있고, 마지막 선택은 그 항목에 기록된다(`requested_provider`). 업로드 화면은 문제집 선택만 유지한다.
+- 기본은 `ANALYZE_PROVIDER`(`zai` | `codex` | `agy`, 기본 zai — GLM 5.3 Flash). `/items`의 상세에서 **다시 분석** 옆 선택 상자로 항목마다 LLM을 골라 재분석할 수 있고, 마지막 선택은 그 항목에 기록된다(`requested_provider`). 업로드 화면은 문제집 선택만 유지한다.
 - Claude 지원은 제거됐다. 옛 기록에 `requested_provider: claude` 가 남아 있으면 재분석 때 서버 기본값으로 되돌리고, 화면 표시에는 옛 라벨(`Claude`)이 그대로 남는다.
 - z.ai(GLM)는 Z.AI Coding Plan 엔드포인트의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. 각 LLM의 주소·모델·API 키는 **`user/config/providers.json`** 파일 한 곳에서 관리한다(~/.openclaw 의 `models.providers` 와 같은 형식, 커밋 안 됨). 같은 이름의 환경변수가 있으면 그쪽이 우선하고, 어디에도 키가 없으면 분석이 실패하며 사유가 화면에 표시된다.
+- z.ai는 사진을 base64 data URL(`image_url` 콘텐츠 블록)로 메시지에 첨부하므로 **이미지 입력이 되는 모델**을 써야 한다(기본 `glm-5.3-flash` — 네이티브 비전 지원). 텍스트 전용 모델(`glm-5.3`)을 지정하면 사진을 받지 못해 OCR 텍스트만으로 분석한다. GLM-5.3-Flash·GLM-5V 계열은 추론을 강제해서 `thinking`을 끌 수 없어, 텍스트 전용 모델일 때만 thinking을 끼워 보낸다.
 - 세 LLM 모두 같은 지침·분류 체계·스키마·가드레일 검사를 거친다. 결과에는 어느 LLM·모델로 분석했는지(`meta.provider`, `meta.model`)가 남는다.
-- omlx(집 내부망 oMLX 서버, Qwen3.8 27B)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 z.ai와 마찬가지로 OCR 텍스트·문제집 정보만으로 분석한다(사진 미전송). 서버가 API 키를 요구하므로 providers.json 의 `omlx.apiKey` 가 필요하다.
+- omlx(집 내부망 oMLX 서버, Qwen3.8 27B)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 사진 없이 OCR 텍스트·문제집 정보만으로 분석한다(z.ai와 달리 사진 미전송). 서버가 API 키를 요구하므로 providers.json 의 `omlx.apiKey` 가 필요하다.
 - codex는 `codex exec --output-schema … -i <사진> -s read-only --ephemeral`로 호출하고 프롬프트는 stdin으로 넘긴다(`src/lib/server/llm.ts`). 사진은 첨부로 전달하므로 파일 시스템·셸이 필요 없어 읽기 전용 샌드박스로 실행한다.
 - agy(Antigravity CLI, Gemini)는 `agy -p <프롬프트> --output-format json --json-schema <파일> --add-dir <항목 폴더>`로 호출한다. 이미지 첨부 옵션이 없어 에이전트가 `view_file` 도구로 사진을 열며, **권한 우회 옵션(`--dangerously-skip-permissions`)은 쓰지 않는다.** 헤드리스에서는 권한 확인창을 띄울 수 없어 셸 명령이 자동 거부되므로, 프롬프트에서 셸 사용을 금지하고 사진의 절대 경로와 `view_file`을 지정한다(안 그러면 열기 전에 `pwd && ls`부터 하려다 빈 응답이 된다). 프롬프트는 `-p` 인자로 넘기므로 120KB를 넘으면 실행하지 않고 오류를 낸다.
 - Gemini는 함수 스키마의 숫자 `enum`을 거부하므로, agy로 보낼 때만 `difficulty`·`severity`를 정수 범위(`minimum`/`maximum`)로 바꿔 보낸다(`toGeminiSchema`). 결과 검증은 원래 스키마로 한다.
@@ -122,7 +123,7 @@ journalctl --user -u ymath -f                     # 로그
 | `DATA_DIR` | `./user/data` | 사진·분석 결과 저장 위치 |
 | `STUDENT_NAME` | (비어있음) | 프롬프트와 분석/보고서에서 사용할 학생 이름(예: `지우`). 설정하지 않으면 자연스러운 기본형("학생", "생각 습관")으로 처리된다 |
 | `ANALYZE_PROVIDER` | `zai` | 분석에 쓸 LLM 기본값: `zai`, `codex`, `agy`. 결과 화면의 **다시 분석**에서 항목별로 바꿀 수 있다 |
-| `ANALYZE_MODEL` | `glm-5.3` | z.ai 모델. `ZAI_MODEL` 로도 지정할 수 있다(`ANALYZE_MODEL` 이 이긴다) |
+| `ANALYZE_MODEL` | `glm-5.3-flash` | z.ai 모델. 사진을 첨부하므로 이미지 입력이 되는 모델이어야 한다(`glm-5.3` 은 텍스트 전용). `ZAI_MODEL` 로도 지정할 수 있다(`ANALYZE_MODEL` 이 이긴다) |
 | `ZAI_API_KEY` | (없음) | Z.AI API 키. 보통은 `user/config/providers.json` 의 `zai.apiKey` 를 쓰고, 환경변수가 있으면 그쪽이 이긴다 |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI Coding Plan 엔드포인트. `providers.json` 의 `zai.baseUrl` 으로도 지정 가능 |
 | `OMLX_BASE_URL` | `http://192.168.1.9:9000/v1` | oMLX(내부망 OpenAI 호환 서버) 주소. `providers.json` 의 `omlx.baseUrl` 으로도 지정 가능 |
