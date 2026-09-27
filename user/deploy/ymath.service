@@ -18,6 +18,10 @@ Environment=PORT=3141
 # cloudflared 가 X-Forwarded-Proto(https) 와 X-Forwarded-Host 를 보내므로 이를 신뢰한다
 Environment=PROTOCOL_HEADER=x-forwarded-proto
 Environment=HOST_HEADER=x-forwarded-host
+# ADDRESS_HEADER(x-forwarded-for 등)는 절대 설정하지 않는다. 어댑터가 소켓 주소 대신 그 헤더만
+# 읽게 되어, 헤더가 없는 요청(내부망 직접 접속·루프백)에서 getClientAddress 가 예외로 실패하고
+# 주소를 못 얻으면 내부망 자동 신뢰(로그인 생략)가 전부 무효화된다. 2026-09 설치본 드리프트로 실제 발생.
+#  → 감사 로그 ip=unknown 이 보이면 이 설정부터 의심할 것
 # 사진(수 MB)을 받아야 하므로 기본 512KB 제한을 늘린다
 Environment=BODY_SIZE_LIMIT=30M
 # 사용자 서비스의 PATH 에는 ~/.local/bin 이 없다. ocr 이 거기에 있다.
