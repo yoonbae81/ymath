@@ -51,7 +51,7 @@ export function buildPrompt(p: {
 	imagePath: string;
 	ocrText: string;
 	hint?: string;
-	/** 사진을 전달하는 방식이 다르다: codex·zai 는 메시지에 첨부로 받고, agy 는 경로를 view_file 로 연다 */
+	/** 사진을 전달하는 방식이 다르다: codex·zai·omlx 는 메시지에 첨부로 받고, agy 는 경로를 view_file 로 연다 */
 	provider?: Provider;
 }): string {
 	const patterns = p.patterns.length
@@ -71,7 +71,7 @@ export function buildPrompt(p: {
 		'---',
 		'# 이번 오답',
 		`- 문제집: ${p.record.workbook.name}`,
-		p.provider === 'codex' || p.provider === 'zai'
+		p.provider === 'codex' || p.provider === 'zai' || p.provider === 'omlx'
 			? '- 사진: 이 메시지에 첨부된 이미지입니다. 반드시 직접 보고 분석하세요'
 			: p.provider === 'agy'
 				? // agy 는 헤드리스에서 셸 명령이 자동 거부되는데, 사진을 열기 전에 pwd/ls 부터 하려는 습관이 있어 도구를 못 박아 준다

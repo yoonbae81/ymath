@@ -208,8 +208,14 @@ describe('분석 LLM 선택', () => {
 		expect(capturedUrl).toBe('http://192.168.1.9:9000/v1/chat/completions');
 		expect(capturedBody.model).toBe('mlx-community--Qwen3.8-27B-8bit');
 		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
-		expect(capturedBody.messages[1].content).toContain('준수해야 할 JSON Schema');
-		expect(capturedBody.messages[1].content).toContain('제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요');
+		// Qwen3.8 은 멀티모달 — 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
+		const parts = capturedBody.messages[1].content as any[];
+		expect(parts).toHaveLength(2);
+		expect(parts[0].type).toBe('image_url');
+		expect(parts[0].image_url.url).toBe('data:image/jpeg;base64,aW1n');
+		expect(parts[1].type).toBe('text');
+		expect(parts[1].text).toContain('첨부된 이미지');
+		expect(parts[1].text).toContain('준수해야 할 JSON Schema');
 	});
 
 	it('OMLX_API_KEY 가 없으면 oMLX 를 호출하지 않고 사유를 알린다', async () => {

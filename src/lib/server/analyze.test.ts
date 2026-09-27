@@ -90,15 +90,15 @@ describe('buildPrompt', () => {
 		expect(p).toContain('$x^2$');
 	});
 
-	it('사진 안내는 provider 별로 다르다: codex·zai 는 첨부 안내, agy 는 절대 경로, omlx 는 OCR 기반 안내', () => {
+	it('사진 안내는 provider 별로 다르다: codex·zai·omlx 는 첨부 안내, agy 는 절대 경로', () => {
 		const agy = buildPrompt({ ...base, patterns: [], ocrText: 'x', provider: 'agy' });
 		expect(agy).toContain('/x/image.jpg');
 		expect(agy).toContain('view_file');
-		const zai = buildPrompt({ ...base, patterns: [], ocrText: 'x', provider: 'zai' });
-		expect(zai).toContain('첨부된 이미지');
-		expect(zai).not.toContain('/x/image.jpg');
-		const omlx = buildPrompt({ ...base, patterns: [], ocrText: 'x', provider: 'omlx' });
-		expect(omlx).toContain('제공된 OCR 텍스트와 문제집 정보');
+		for (const provider of ['codex', 'zai', 'omlx'] as const) {
+			const p = buildPrompt({ ...base, patterns: [], ocrText: 'x', provider });
+			expect(p).toContain('첨부된 이미지');
+			expect(p).not.toContain('/x/image.jpg');
+		}
 	});
 
 	it('재시도 힌트가 있을 때만 직전 문제점 섹션이 들어간다', () => {

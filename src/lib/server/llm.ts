@@ -11,7 +11,7 @@ export interface StructuredCall {
 	schema: object;
 	/** 작업 디렉터리(임시 파일도 여기에 만들고 지운다) */
 	dir: string;
-	/** 분석할 사진. codex 는 -i 로, zai 는 base64 data URL 로 첨부하고, agy 는 프롬프트에 적힌 경로를 view_file 로 연다 */
+	/** 분석할 사진. codex 는 -i 로, zai·omlx 는 base64 data URL 로 첨부하고, agy 는 프롬프트에 적힌 경로를 view_file 로 연다 */
 	imagePath: string;
 }
 
@@ -162,6 +162,15 @@ type ChatContentPart = { type: 'image_url'; image_url: { url: string } } | { typ
 const promptWithSchema = (prompt: string, schema: object) =>
 	`${prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
 
+/** image.jpg 를 base64 data URL 로 첨부한 멀티모달 user 메시지(zai·omlx 공통) */
+const imageUserMessage = (imagePath: string, prompt: string): { role: 'user'; content: ChatContentPart[] } => ({
+	role: 'user',
+	content: [
+		{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${readFileSync(imagePath).toString('base64')}` } },
+		{ type: 'text', text: prompt }
+	]
+});
+
 /**
  * OpenAI 호환 chat/completions 한 번 호출하고 응답 본문을 반환한다.
  * z.ai 원격과 집 내부망 oMLX 가 같은 형식을 쓰므로 한 곳에서 429·할당량·빈 응답을 처리한다.
@@ -249,23 +258,12 @@ const zaiExtraBody = (model: string): Record<string, unknown> => ({
 async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우거나 ZAI_API_KEY 환경변수를 설정하세요');
-	// image.jpg 를 base64 data URL 로 메시지에 첨부한다(Z.ai 비전 모델 공식 형식). 기본 모델 glm-5.3-flash 처럼 이미지 입력이 되는 모델이어야 한다
-	const image = `data:image/jpeg;base64,${readFileSync(c.imagePath).toString('base64')}`;
 	const content = await chatCompletion({
 		label: 'z.ai',
 		baseUrl: s.zaiBaseUrl,
 		apiKey: s.zaiApiKey,
 		model: s.zaiModel,
-		messages: [
-			{ role: 'system', content: MATH_COACH_SYSTEM },
-			{
-				role: 'user',
-				content: [
-					{ type: 'image_url', image_url: { url: image } },
-					{ type: 'text', text: promptWithSchema(c.prompt, c.schema) }
-				]
-			}
-		],
+		messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(c.imagePath, promptWithSchema(c.prompt, c.schema))],
 		jsonMode: true,
 		extraBody: zaiExtraBody(s.zaiModel),
 		timeoutMs: s.analyzeTimeoutMs
@@ -273,7 +271,7 @@ async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	return { output: parseJsonBody('zai', content), model: s.zaiModel };
 }
 
-/** 집 내부망 oMLX(OpenAI 호환)로 분석한다. 사진 없이 OCR 텍스트·문제집 정보만으로 답한다(z.ai 와 달리 사진 미전송) */
+/** 집 내부망 oMLX(Qwen3.8 27B, 멀티모달)로 분석한다. zai 처럼 사진을 base64 data URL 로 첨부한다 */
 async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우거나 OMLX_API_KEY 환경변수를 설정하세요');
@@ -282,10 +280,7 @@ async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 		baseUrl: s.omlxBaseUrl,
 		apiKey: s.omlxApiKey,
 		model: s.omlxModel,
-		messages: [
-			{ role: 'system', content: MATH_COACH_SYSTEM },
-			{ role: 'user', content: promptWithSchema(c.prompt, c.schema) }
-		],
+		messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(c.imagePath, promptWithSchema(c.prompt, c.schema))],
 		jsonMode: true,
 		// Qwen 계열은 thinking 을 본문에 섞어 내보내므로 출력 예산을 넉넉히 둔다
 		extraBody: { max_tokens: 16384 },
