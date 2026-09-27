@@ -13,6 +13,7 @@ const SCHEMA = { type: 'object', properties: { a: { type: 'string' } }, required
 
 beforeEach(() => {
 	work = mkdtempSync(join(tmpdir(), 'ymath-llm-'));
+	process.env.CONFIG_DIR = work; // 실제 user/config/providers.json 이 테스트에 새지 않게 한다
 	writeFileSync(join(work, 'work.jpg'), 'img');
 	writeFileSync(join(work, 'out.json'), JSON.stringify({ a: '결과' }));
 	process.env.FAKE_LOG = join(work, 'log.json');
@@ -22,7 +23,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	vi.restoreAllMocks();
-	for (const k of ['FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CODEX_MODEL', 'AGY_BIN', 'AGY_MODEL', 'OLMX_API_KEY']) delete process.env[k];
+	for (const k of ['FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CODEX_MODEL', 'AGY_BIN', 'AGY_MODEL', 'OMLX_API_KEY', 'CONFIG_DIR']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
 
@@ -143,8 +144,8 @@ describe('agy (구조화)', () => {
 });
 
 describe('runText', () => {
-	it('olmx: OpenAI 호환 엔드포인트로 본문을 받는다', async () => {
-		process.env.OLMX_API_KEY = 'k';
+	it('omlx: OpenAI 호환 엔드포인트로 본문을 받는다', async () => {
+		process.env.OMLX_API_KEY = 'k';
 		let url = '';
 		let body: any;
 		vi.stubGlobal(
@@ -155,17 +156,17 @@ describe('runText', () => {
 				return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '보고서 본문' } }] }) };
 			})
 		);
-		const r = await runText('olmx', '써 줘');
-		expect(r).toEqual({ text: '보고서 본문', model: 'Qwen3.8 27B' });
+		const r = await runText('omlx', '써 줘');
+		expect(r).toEqual({ text: '보고서 본문', model: 'mlx-community--Qwen3.8-27B-8bit' });
 		expect(url).toBe('http://192.168.1.9:9000/v1/chat/completions');
-		expect(body.model).toBe('Qwen3.8 27B');
+		expect(body.model).toBe('mlx-community--Qwen3.8-27B-8bit');
 		// 본문 요청에는 JSON 모드를 쓰지 않는다
 		expect(body.response_format).toBeUndefined();
 		expect(body.messages).toEqual([{ role: 'user', content: '써 줘' }]);
 	});
 
-	it('olmx: 키가 없으면 호출하지 않고 오류', async () => {
-		await expect(runText('olmx', 'x')).rejects.toThrow(/oLMX API 키가 설정되지 않았습니다/);
+	it('omlx: 키가 없으면 호출하지 않고 오류', async () => {
+		await expect(runText('omlx', 'x')).rejects.toThrow(/oMLX API 키가 설정되지 않았습니다/);
 	});
 
 	it('agy: 도구를 쓰지 말라는 지시를 붙여 본문을 받는다', async () => {

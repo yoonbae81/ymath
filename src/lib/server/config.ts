@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { PROVIDERS, type Provider, type Workbook } from '$lib/types';
 
@@ -11,51 +11,47 @@ export const dataDir = () => resolve(process.env.DATA_DIR ?? join(userDir(), 'da
 export const promptsDir = () => resolve(process.env.PROMPTS_DIR ?? join(userDir(), 'prompts'));
 export const configDir = () => resolve(process.env.CONFIG_DIR ?? join(userDir(), 'config'));
 
-const zaiApiKeyFile = () => join(configDir(), 'zai-api-key');
+/**
+ * user/config/providers.json — LLM별 주소·모델·API 키. ~/.openclaw 의 "models.providers" 와 같은 형식.
+ *   { "providers": { "zai": { "baseUrl": "...", "apiKey": "...", "models": [{ "id": "glm-5.3", "name": "GLM 5.3" }] } } }
+ * 커밋되지 않는다(.gitignore). 같은 이름의 환경변수가 있으면 그쪽이 이긴다.
+ */
+export interface LlmProviderConfig {
+	baseUrl?: string;
+	apiKey?: string;
+	models?: { id: string; name?: string }[];
+}
 
-/** 설정 화면에서 저장한 API 키. 파일이 없거나 비어 있으면 빈 문자열 */
-export function readSavedZaiApiKey(): string {
+const providersFile = () => join(configDir(), 'providers.json');
+
+/** 설정 파일의 providers 맵. 파일이 없으면 빈 객체, 있지만 깨졌으면 명확히 실패한다 */
+export function readLlmProviders(): Record<string, LlmProviderConfig> {
 	try {
-		return readFileSync(zaiApiKeyFile(), 'utf8').trim();
-	} catch {
-		return '';
+		const parsed = JSON.parse(readFileSync(providersFile(), 'utf8')) as { providers?: Record<string, LlmProviderConfig> };
+		return parsed.providers ?? {};
+	} catch (e) {
+		if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return {};
+		throw new Error(`user/config/providers.json 을 읽을 수 없음: ${e instanceof Error ? e.message : String(e)}`);
 	}
 }
 
-/** API 키를 user/config/zai-api-key 에 저장한다(0600, 커밋되지 않는다) */
-export function saveZaiApiKey(key: string): void {
-	mkdirSync(configDir(), { recursive: true });
-	writeFileSync(zaiApiKeyFile(), `${key.trim()}\n`, { mode: 0o600 });
-}
-
-/** 저장한 키를 지운다 */
-export function deleteSavedZaiApiKey(): void {
-	rmSync(zaiApiKeyFile(), { force: true });
-}
-
-export type ZaiKeySource = 'env' | 'saved' | 'none';
-
-/** 지금 쓰는 API 키가 어디서 온 것인지. 우선순위는 환경변수 > 저장한 키이고, 어디에도 없으면 none(분석 실패) */
-export function zaiApiKeySource(): ZaiKeySource {
-	if (process.env.ZAI_API_KEY?.trim()) return 'env';
-	if (readSavedZaiApiKey()) return 'saved';
-	return 'none';
-}
-
-export const settings = () => ({
-	/** 분석에 쓰는 LLM 기본값. 재분석 때 항목별로 바꿀 수 있다 */
-	provider: (PROVIDERS as readonly string[]).includes(process.env.ANALYZE_PROVIDER ?? '')
-		? (process.env.ANALYZE_PROVIDER as Provider)
-		: ('zai' as Provider),
-	/** 키가 어디에도 없으면 빈 문자열이고, z.ai 호출 전에 명확한 오류로 실패한다 */
-	zaiApiKey: process.env.ZAI_API_KEY?.trim() || readSavedZaiApiKey(),
-	zaiBaseUrl: process.env.ZAI_BASE_URL ?? 'https://api.z.ai/api/coding/paas/v4',
-	zaiModel: process.env.ANALYZE_MODEL ?? process.env.ZAI_MODEL ?? 'glm-5.3',
-	/** 집 내부망 oLMX 서버(OpenAI 호환). 키는 서버가 요구하므로 OLMX_API_KEY 로 넣는다 */
-	olmxBaseUrl: process.env.OLMX_BASE_URL ?? 'http://192.168.1.9:9000/v1',
-	olmxModel: process.env.OLMX_MODEL ?? 'Qwen3.8 27B',
-	olmxApiKey: process.env.OLMX_API_KEY?.trim() ?? '',
-	codexBin: process.env.CODEX_BIN ?? 'codex',
+export const settings = () => {
+	const providers = readLlmProviders();
+	const zai = providers.zai;
+	const omlx = providers.omlx;
+	return {
+		/** 분석에 쓰는 LLM 기본값. 재분석 때 항목별로 바꿀 수 있다 */
+		provider: (PROVIDERS as readonly string[]).includes(process.env.ANALYZE_PROVIDER ?? '')
+			? (process.env.ANALYZE_PROVIDER as Provider)
+			: ('zai' as Provider),
+		zaiApiKey: process.env.ZAI_API_KEY?.trim() || zai?.apiKey || '',
+		zaiBaseUrl: process.env.ZAI_BASE_URL || zai?.baseUrl || 'https://api.z.ai/api/coding/paas/v4',
+		zaiModel: process.env.ANALYZE_MODEL || process.env.ZAI_MODEL || zai?.models?.[0]?.id || 'glm-5.3',
+		/** 집 내부망 oMLX 서버(OpenAI 호환, Mac에서 MLX 추론). 서버가 API 키를 요구한다 */
+		omlxBaseUrl: process.env.OMLX_BASE_URL || omlx?.baseUrl || 'http://192.168.1.9:9000/v1',
+		omlxModel: process.env.OMLX_MODEL || omlx?.models?.[0]?.id || 'mlx-community--Qwen3.8-27B-8bit',
+		omlxApiKey: process.env.OMLX_API_KEY?.trim() || omlx?.apiKey || '',
+		codexBin: process.env.CODEX_BIN ?? 'codex',
 	// codex 설정 파일의 기본 모델은 계정에 따라 지원되지 않을 수 있고 이미지 입력도 필요하므로 명시한다
 	codexModel: process.env.CODEX_MODEL ?? 'gpt-5.5',
 	agyBin: process.env.AGY_BIN ?? 'agy',
@@ -64,9 +60,10 @@ export const settings = () => ({
 	ocrBin: process.env.OCR_BIN ?? 'ocr',
 	analyzeTimeoutMs: Number(process.env.ANALYZE_TIMEOUT_MS ?? 5 * 60_000),
 	ocrTimeoutMs: Number(process.env.OCR_TIMEOUT_MS ?? 2 * 60_000),
-	maxAttempts: Number(process.env.ANALYZE_MAX_ATTEMPTS ?? 2),
-	studentName: (process.env.STUDENT_NAME ?? '').trim()
-});
+		maxAttempts: Number(process.env.ANALYZE_MAX_ATTEMPTS ?? 2),
+		studentName: (process.env.STUDENT_NAME ?? '').trim()
+	};
+};
 
 /** 프롬프트 템플릿의 학생 이름 치환. STUDENT_NAME 환경변수가 있으면 친근하게 반영하고, 없으면 자연스러운 기본형으로 처리 */
 export function renderPrompt(template: string, name = process.env.STUDENT_NAME?.trim()): string {

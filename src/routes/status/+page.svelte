@@ -1,13 +1,11 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
 	import { base } from '$app/paths';
-	import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 	import { hasActive, STATUS_LABEL, STATUS_TONE } from '$lib/status';
 	import { problemNumber } from '$lib/report-links';
 	import { formatDate, formatDateTimeSeconds } from '$lib/time';
 	import {
 		ACTIVE_REPORT_STATUSES,
-		PROVIDER_LABEL,
 		REPORT_STATUS_LABEL,
 		REPORT_STATUS_TONE,
 		type ItemRecord,
@@ -18,40 +16,6 @@
 
 	let statusFilter = $state<string>('');
 	let typeFilter = $state<string>('');
-
-	// 분석 설정 패널(읽기 전용 게스트에게는 보이지 않는다). 저장한 API 키 값은 화면으로 다시 보여 주지 않는다
-	const family = $derived(data.session?.role === 'family');
-	let settingsOpen = $state(false);
-	let apiKeyInput = $state('');
-	let keyBusy = $state(false);
-	let keyNotice = $state('');
-	let keyError = $state('');
-
-	const keySourceLabel = $derived(
-		data.zai.keySource === 'env' ? '환경변수(ZAI_API_KEY)' : data.zai.keySource === 'saved' ? '저장한 키' : '키 없음 — 저장 필요'
-	);
-
-	async function saveKey() {
-		keyBusy = true;
-		keyNotice = '';
-		keyError = '';
-		try {
-			const res = await fetch(`${base}/api/settings`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json', [AJAX_HEADER]: AJAX_VALUE },
-				body: JSON.stringify({ apiKey: apiKeyInput })
-			});
-			const body = (await res.json().catch(() => null)) as { message?: string } | null;
-			if (!res.ok) throw new Error(body?.message ?? `저장하지 못했어요(${res.status})`);
-			apiKeyInput = '';
-			keyNotice = '저장했어요. 다음 분석부터 이 키로 진행됩니다.';
-			await invalidate('app:status');
-		} catch (e) {
-			keyError = e instanceof Error ? e.message : '저장하지 못했어요';
-		} finally {
-			keyBusy = false;
-		}
-	}
 
 	const activeItems = $derived(hasActive(data.items));
 	const activeReports = $derived(data.reports.some((r) => ACTIVE_REPORT_STATUSES.includes(r.status)));
@@ -126,38 +90,6 @@
 		🔄 새로고침
 	</button>
 </div>
-
-{#if family}
-	<section class="panel settings">
-		<details bind:open={settingsOpen}>
-			<summary>⚙️ 분석 설정</summary>
-			<div class="settings-body">
-				<p class="set-row">기본 분석: <b>{PROVIDER_LABEL[data.zai.provider]}</b> · 모델 <code>{data.zai.model}</code></p>
-				<p class="set-row">
-					Z.AI Coding Plan API 키 — 지금 쓰는 키:
-					<b class:key-warn={data.zai.keySource === 'none'}>{keySourceLabel}</b>
-					{#if data.zai.keySource === 'none'}<span class="key-warn">· 키가 없으면 분석이 실패해요</span>{/if}
-				</p>
-				<div class="key-row">
-					<input
-						type="password"
-						placeholder="새 API 키를 붙여넣으세요"
-						aria-label="새 Z.AI API 키"
-						bind:value={apiKeyInput}
-						disabled={keyBusy}
-					/>
-					<button onclick={saveKey} disabled={keyBusy || !apiKeyInput.trim()}>{keyBusy ? '저장 중…' : '저장'}</button>
-				</div>
-				<p class="set-hint">
-					저장한 키는 서버의 user/config/zai-api-key 파일(0600)에만 남아요. 환경변수 ZAI_API_KEY 가 설정돼 있으면 그쪽이 우선해요.
-					빈 상태로 저장하면 저장한 키를 지워요. 키가 하나도 없으면 분석과 보고서 작성이 실패해요.
-				</p>
-				{#if keyNotice}<p class="set-ok" role="status">{keyNotice}</p>{/if}
-				{#if keyError}<p class="set-err" role="alert">{keyError}</p>{/if}
-			</div>
-		</details>
-	</section>
-{/if}
 
 <section class="panel">
 	<div class="filter-section">
@@ -318,84 +250,6 @@
 		border: 1px solid var(--line);
 		border-radius: var(--radius);
 		padding: 16px;
-	}
-
-	.settings {
-		margin-bottom: 16px;
-	}
-	.settings summary {
-		cursor: pointer;
-		font-weight: 700;
-		font-size: 0.95rem;
-		color: var(--text);
-	}
-	.settings-body {
-		display: flex;
-		flex-direction: column;
-		gap: 8px;
-		margin-top: 10px;
-	}
-	.set-row {
-		margin: 0;
-		font-size: 0.88rem;
-		color: var(--muted);
-	}
-	.set-row b {
-		color: var(--text);
-	}
-	.set-row b.key-warn,
-	.key-warn {
-		color: var(--warn);
-	}
-	.set-row code {
-		font-size: 0.82rem;
-		background: var(--bg);
-		border: 1px solid var(--line);
-		border-radius: 6px;
-		padding: 1px 6px;
-	}
-	.key-row {
-		display: flex;
-		gap: 8px;
-	}
-	.key-row input {
-		flex: 1;
-		min-width: 0;
-		padding: 9px 10px;
-		font-size: 0.88rem;
-		border: 1px solid var(--line);
-		border-radius: 10px;
-		background: var(--bg);
-		color: var(--text);
-	}
-	.key-row button {
-		padding: 9px 16px;
-		font-weight: 700;
-		border-radius: 10px;
-		border: 1px solid var(--accent);
-		background: var(--accent);
-		color: #ffffff;
-		cursor: pointer;
-		white-space: nowrap;
-	}
-	.key-row button:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-	.set-hint {
-		margin: 0;
-		font-size: 0.78rem;
-		color: var(--muted);
-	}
-	.set-ok {
-		margin: 0;
-		font-size: 0.82rem;
-		color: var(--ok);
-	}
-	.set-err {
-		margin: 0;
-		font-size: 0.82rem;
-		color: var(--bad);
 	}
 
 	.filter-section {

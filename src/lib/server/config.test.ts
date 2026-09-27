@@ -3,15 +3,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-	deleteSavedZaiApiKey,
 	gradeRank,
 	loadWorkbooks,
-	readSavedZaiApiKey,
+	readLlmProviders,
 	renderPrompt,
-	saveZaiApiKey,
 	settings,
-	sortWorkbooks,
-	zaiApiKeySource
+	sortWorkbooks
 } from './config';
 import type { Workbook } from '$lib/types';
 
@@ -116,43 +113,50 @@ describe('renderPrompt', () => {
 	});
 });
 
-describe('Z.AI API 키 저장', () => {
+describe('user/config/providers.json (LLM 설정)', () => {
 	let dir: string;
 	beforeEach(() => {
-		dir = mkdtempSync(join(tmpdir(), 'ymath-key-'));
+		dir = mkdtempSync(join(tmpdir(), 'ymath-prov-'));
 		process.env.CONFIG_DIR = dir;
 		delete process.env.ZAI_API_KEY;
+		delete process.env.OMLX_API_KEY;
 	});
 	afterEach(() => {
 		delete process.env.CONFIG_DIR;
 		delete process.env.ZAI_API_KEY;
+		delete process.env.OMLX_API_KEY;
 		rmSync(dir, { recursive: true, force: true });
 	});
+	const write = (obj: unknown) => writeFileSync(join(dir, 'providers.json'), JSON.stringify(obj));
 
-	it('아무것도 없으면 키가 없는 상태(none)이고 값도 비어 있다', () => {
-		expect(zaiApiKeySource()).toBe('none');
-		expect(readSavedZaiApiKey()).toBe('');
+	it('파일이 없으면 빈 providers 이고 키도 비어 있다', () => {
+		expect(readLlmProviders()).toEqual({});
 		expect(settings().zaiApiKey).toBe('');
+		expect(settings().omlxApiKey).toBe('');
 	});
 
-	it('저장하면 파일로 남고 settings 가 그 키를 쓴다', () => {
-		saveZaiApiKey('  test-key-123  ');
-		expect(readSavedZaiApiKey()).toBe('test-key-123');
-		expect(zaiApiKeySource()).toBe('saved');
-		expect(settings().zaiApiKey).toBe('test-key-123');
+	it('provider별 apiKey·baseUrl·모델을 읽는다', () => {
+		write({
+			providers: {
+				omlx: { baseUrl: 'http://x:9000/v1', apiKey: 'k1', models: [{ id: 'm1', name: 'M1' }] }
+			}
+		});
+		const s = settings();
+		expect(s.omlxApiKey).toBe('k1');
+		expect(s.omlxBaseUrl).toBe('http://x:9000/v1');
+		expect(s.omlxModel).toBe('m1');
 	});
 
-	it('환경변수가 저장한 키보다 우선한다', () => {
-		saveZaiApiKey('saved-key');
+	it('환경변수가 파일보다 우선하고, 모델은 환경변수가 없으면 파일값을 쓴다', () => {
+		write({ providers: { zai: { apiKey: 'file-key', models: [{ id: 'glm-5.3' }] } } });
 		process.env.ZAI_API_KEY = 'env-key';
-		expect(zaiApiKeySource()).toBe('env');
-		expect(settings().zaiApiKey).toBe('env-key');
+		const s = settings();
+		expect(s.zaiApiKey).toBe('env-key');
+		expect(s.zaiModel).toBe('glm-5.3');
 	});
 
-	it('지우면 키가 없는 상태(none)로 돌아간다', () => {
-		saveZaiApiKey('saved-key');
-		deleteSavedZaiApiKey();
-		expect(readSavedZaiApiKey()).toBe('');
-		expect(zaiApiKeySource()).toBe('none');
+	it('JSON이 깨지면 명확한 오류를 낸다', () => {
+		writeFileSync(join(dir, 'providers.json'), '{ 깨진 JSON');
+		expect(() => readLlmProviders()).toThrow(/providers\.json/);
 	});
 });

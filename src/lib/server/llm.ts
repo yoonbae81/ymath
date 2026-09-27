@@ -127,7 +127,7 @@ const promptWithSchema = (prompt: string, schema: object) =>
 
 /**
  * OpenAI 호환 chat/completions 한 번 호출하고 응답 본문을 반환한다.
- * z.ai 원격과 집 내부망 oLMX 가 같은 형식을 쓰므로 한 곳에서 429·할당량·빈 응답을 처리한다.
+ * z.ai 원격과 집 내부망 oMLX 가 같은 형식을 쓰므로 한 곳에서 429·할당량·빈 응답을 처리한다.
  */
 async function chatCompletion(o: {
 	label: string;
@@ -200,7 +200,7 @@ async function chatCompletion(o: {
 
 async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
-	if (!s.zaiApiKey) throw missingKeyError('Z.AI', '/status 화면의 ⚙️ 분석 설정에서 저장하거나 ZAI_API_KEY 환경변수를 설정하세요');
+	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우거나 ZAI_API_KEY 환경변수를 설정하세요');
 	const content = await chatCompletion({
 		label: 'z.ai',
 		baseUrl: s.zaiBaseUrl,
@@ -217,15 +217,15 @@ async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	return { output: parseJsonBody('zai', content), model: s.zaiModel };
 }
 
-/** 집 내부망 oLMX(OpenAI 호환)로 분석한다. 사진 없이 OCR 텍스트·문제집 정보만으로 답한다(z.ai 와 동일) */
-async function structuredWithOlmx(c: StructuredCall): Promise<LlmOutput> {
+/** 집 내부망 oMLX(OpenAI 호환)로 분석한다. 사진 없이 OCR 텍스트·문제집 정보만으로 답한다(z.ai 와 동일) */
+async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
-	if (!s.olmxApiKey) throw missingKeyError('oLMX', 'OLMX_API_KEY 환경변수를 설정하세요');
+	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우거나 OMLX_API_KEY 환경변수를 설정하세요');
 	const content = await chatCompletion({
-		label: 'oLMX',
-		baseUrl: s.olmxBaseUrl,
-		apiKey: s.olmxApiKey,
-		model: s.olmxModel,
+		label: 'oMLX',
+		baseUrl: s.omlxBaseUrl,
+		apiKey: s.omlxApiKey,
+		model: s.omlxModel,
 		messages: [
 			{ role: 'system', content: MATH_COACH_SYSTEM },
 			{ role: 'user', content: promptWithSchema(c.prompt, c.schema) }
@@ -233,7 +233,7 @@ async function structuredWithOlmx(c: StructuredCall): Promise<LlmOutput> {
 		jsonMode: true,
 		timeoutMs: s.analyzeTimeoutMs
 	});
-	return { output: parseJsonBody('oLMX', content), model: s.olmxModel };
+	return { output: parseJsonBody('oMLX', content), model: s.omlxModel };
 }
 
 async function structuredWithCodex(c: StructuredCall): Promise<LlmOutput> {
@@ -333,7 +333,7 @@ export function runStructured(provider: Provider, call: StructuredCall): Promise
 	if (provider === 'zai') return structuredWithZai(call);
 	if (provider === 'codex') return structuredWithCodex(call);
 	if (provider === 'agy') return structuredWithAgy(call);
-	if (provider === 'olmx') return structuredWithOlmx(call);
+	if (provider === 'omlx') return structuredWithOmlx(call);
 	// 옛 기록의 requested_provider 같은 값이 타입 검사를 우회해 올 수 있다
 	return Promise.reject(new Error(`사용할 수 없는 LLM 입니다: ${provider}`));
 }
@@ -342,7 +342,7 @@ export function runStructured(provider: Provider, call: StructuredCall): Promise
 export async function runText(provider: Provider, prompt: string): Promise<{ text: string; model: string }> {
 	const s = settings();
 	if (provider === 'zai') {
-		if (!s.zaiApiKey) throw missingKeyError('Z.AI', '/status 화면의 ⚙️ 분석 설정에서 저장하거나 ZAI_API_KEY 환경변수를 설정하세요');
+		if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우거나 ZAI_API_KEY 환경변수를 설정하세요');
 		const text = await chatCompletion({
 			label: 'z.ai',
 			baseUrl: s.zaiBaseUrl,
@@ -355,18 +355,18 @@ export async function runText(provider: Provider, prompt: string): Promise<{ tex
 		});
 		return { text: text.trim(), model: s.zaiModel };
 	}
-	if (provider === 'olmx') {
-		if (!s.olmxApiKey) throw missingKeyError('oLMX', 'OLMX_API_KEY 환경변수를 설정하세요');
+	if (provider === 'omlx') {
+		if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우거나 OMLX_API_KEY 환경변수를 설정하세요');
 		const text = await chatCompletion({
-			label: 'oLMX',
-			baseUrl: s.olmxBaseUrl,
-			apiKey: s.olmxApiKey,
-			model: s.olmxModel,
+			label: 'oMLX',
+			baseUrl: s.omlxBaseUrl,
+			apiKey: s.omlxApiKey,
+			model: s.omlxModel,
 			messages: [{ role: 'user', content: prompt }],
 			jsonMode: false,
 			timeoutMs: s.analyzeTimeoutMs
 		});
-		return { text: text.trim(), model: s.olmxModel };
+		return { text: text.trim(), model: s.omlxModel };
 	}
 	if (provider === 'agy') {
 		// 도구를 쓰려다 헤드리스 권한 거부로 응답이 비는 것을 막기 위해 본문만 답하게 한다

@@ -1,4 +1,3 @@
-import { settings, zaiApiKeySource } from '$lib/server/config';
 import { listReports } from '$lib/server/report';
 import { listRecords } from '$lib/server/store';
 import type { ItemRecord, ReportRecord } from '$lib/types';
@@ -36,8 +35,6 @@ export const load: PageServerLoad = ({ depends }) => {
 	return {
 		items,
 		reports,
-		stats,
-		/** 분석 설정 패널용. 실제 키 값은 노출하지 않고 어디서 왔는지만 알려 준다 */
-		zai: { keySource: zaiApiKeySource(), model: settings().zaiModel, provider: settings().provider }
+		stats
 	};
 };

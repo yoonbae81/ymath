@@ -14,8 +14,8 @@ vite.config.ts.timestamp-*
 # 사진·분석 결과·보고서(개인 학습 데이터). 설정과 지침(user/config, user/prompts)은 커밋한다
 /user/data
 
-# 설정 화면에서 저장한 Z.AI API 키(비밀)
-user/config/zai-api-key
+# LLM별 주소·모델·API 키(비밀). ~/.openclaw 의 providers 형식
+user/config/providers.json
 
 # 환경 설정·비밀
 .env

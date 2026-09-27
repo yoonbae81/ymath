@@ -20,9 +20,10 @@ const record = (requested?: Provider) =>
 beforeEach(() => {
 	work = mkdtempSync(join(tmpdir(), 'ymath-prov-'));
 	process.env.DATA_DIR = join(work, 'data'); // knownPatternIds 가 읽는다(비어 있음)
-	// z.ai·oLMX 경로는 키가 없으면 호출 전에 실패하므로 기본 케이스에선 키를 준다
+	process.env.CONFIG_DIR = work; // 실제 user/config/providers.json 이 테스트에 새지 않게 한다
+	// z.ai·oMLX 경로는 키가 없으면 호출 전에 실패하므로 기본 케이스에선 키를 준다
 	process.env.ZAI_API_KEY = 'test-key';
-	process.env.OLMX_API_KEY = 'test-key';
+	process.env.OMLX_API_KEY = 'test-key';
 	writeFileSync(join(work, 'image.jpg'), 'img');
 	writeFileSync(join(work, 'out.json'), JSON.stringify(validAnalysis()));
 	process.env.FAKE_LOG = join(work, 'log.json');
@@ -49,7 +50,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	vi.restoreAllMocks();
-	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER', 'ZAI_API_KEY', 'OLMX_API_KEY', 'CONFIG_DIR']) delete process.env[k];
+	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER', 'ZAI_API_KEY', 'OMLX_API_KEY', 'CONFIG_DIR']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
 
@@ -155,7 +156,7 @@ describe('분석 LLM 선택', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
-	it('olmx 로 분석하면 oLMX 엔드포인트를 호출하고 모델·스키마 지시가 담긴다', async () => {
+	it('omlx 로 분석하면 oMLX 엔드포인트를 호출하고 모델·스키마 지시가 담긴다', async () => {
 		let capturedUrl = '';
 		let capturedBody: any;
 		vi.stubGlobal(
@@ -173,20 +174,20 @@ describe('분석 LLM 선택', () => {
 				} as any;
 			})
 		);
-		const res = await run(record('olmx'));
-		expect(res).toMatchObject({ provider: 'olmx', model: 'Qwen3.8 27B', taxonomyIssues: [], guardrailWarnings: [] });
+		const res = await run(record('omlx'));
+		expect(res).toMatchObject({ provider: 'omlx', model: 'mlx-community--Qwen3.8-27B-8bit', taxonomyIssues: [], guardrailWarnings: [] });
 		expect(capturedUrl).toBe('http://192.168.1.9:9000/v1/chat/completions');
-		expect(capturedBody.model).toBe('Qwen3.8 27B');
+		expect(capturedBody.model).toBe('mlx-community--Qwen3.8-27B-8bit');
 		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
 		expect(capturedBody.messages[1].content).toContain('준수해야 할 JSON Schema');
 		expect(capturedBody.messages[1].content).toContain('제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요');
 	});
 
-	it('OLMX_API_KEY 가 없으면 oLMX 를 호출하지 않고 사유를 알린다', async () => {
-		delete process.env.OLMX_API_KEY;
+	it('OMLX_API_KEY 가 없으면 oMLX 를 호출하지 않고 사유를 알린다', async () => {
+		delete process.env.OMLX_API_KEY;
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
-		await expect(run(record('olmx'))).rejects.toThrow(/oLMX API 키가 설정되지 않았습니다/);
+		await expect(run(record('omlx'))).rejects.toThrow(/oMLX API 키가 설정되지 않았습니다/);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
