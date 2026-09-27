@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeFakeCli } from './fake-cli';
@@ -12,7 +12,7 @@ const log = () => JSON.parse(readFileSync(process.env.FAKE_LOG!, 'utf8'));
 const SCHEMA = { type: 'object', properties: { a: { type: 'string' } }, required: ['a'], additionalProperties: false };
 
 beforeEach(() => {
-	work = mkdtempSync(join(tmpdir(), 'ymath-llm-'));
+	work = realpathSync(mkdtempSync(join(tmpdir(), 'ymath-llm-')));
 	process.env.CONFIG_DIR = work; // 실제 user/config/providers.json 이 테스트에 새지 않게 한다
 	writeFileSync(join(work, 'work.jpg'), 'img');
 	writeFileSync(join(work, 'out.json'), JSON.stringify({ a: '결과' }));
