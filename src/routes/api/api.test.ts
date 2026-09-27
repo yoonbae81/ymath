@@ -13,7 +13,9 @@ import { POST as retry } from './items/[id]/retry/+server';
 import { POST as feedback } from './items/[id]/feedback/+server';
 import { POST as viewed } from './items/[id]/viewed/+server';
 import { POST as favorite } from './items/[id]/favorite/+server';
+import { POST as settingsSave } from './settings/+server';
 import { createItem, itemDir, readRecord, updateRecord } from '$lib/server/store';
+import { readSavedZaiApiKey } from '$lib/server/config';
 import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 import { currentFeedback, type Analysis } from '$lib/types';
 
@@ -24,10 +26,12 @@ let dir: string;
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), 'ymath-api-'));
 	process.env.DATA_DIR = dir;
+	delete process.env.ZAI_API_KEY;
 	enqueue.mockClear();
 });
 afterEach(() => {
 	delete process.env.DATA_DIR;
+	delete process.env.ZAI_API_KEY;
 	rmSync(dir, { recursive: true, force: true });
 });
 
@@ -199,7 +203,7 @@ describe('POST /api/items/[id]/feedback', () => {
 		updateRecord(r.id, (x) => {
 			x.status = 'done';
 			x.analysis = { asks: '…' } as unknown as Analysis;
-			x.meta = { provider: 'claude', model: 'sonnet', prompt_version: 'abc123', analyzed_at: at };
+			x.meta = { provider: 'zai', model: 'glm-5.3', prompt_version: 'abc123', analyzed_at: at };
 		});
 		return r.id;
 	};
@@ -215,8 +219,8 @@ describe('POST /api/items/[id]/feedback', () => {
 			comment: '부호가 아니라 조건을 놓쳤어요',
 			analyzed_at: '2026-09-20T00:00:00.000Z',
 			prompt_version: 'abc123',
-			provider: 'claude',
-			model: 'sonnet'
+			provider: 'zai',
+			model: 'glm-5.3'
 		});
 		expect(currentFeedback(rec)?.choice).toBe('wrong_diagnosis');
 	});
@@ -281,7 +285,7 @@ describe('POST /api/items/[id]/viewed', () => {
 		updateRecord(r.id, (x) => {
 			x.status = 'done';
 			x.analysis = { asks: '…' } as unknown as Analysis;
-			x.meta = { provider: 'claude', model: 'sonnet', prompt_version: 'abc123', analyzed_at: '2026-09-20T00:00:00.000Z' };
+			x.meta = { provider: 'zai', model: 'glm-5.3', prompt_version: 'abc123', analyzed_at: '2026-09-20T00:00:00.000Z' };
 		});
 		return r.id;
 	};
@@ -347,5 +351,37 @@ describe('POST /api/items/[id]/favorite', () => {
 		const id = createItem(WB).id;
 		await expect(send(id, { favorite: true }, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
 		await expect(send('20260101-000000-zzzz', { favorite: true })).rejects.toMatchObject({ status: 404 });
+	});
+});
+
+describe('POST /api/settings', () => {
+	// 실제 user/config 대신 임시 폴더에 저장하게 격리한다(DATA_DIR 과 폴더를 같이 쓴다)
+	beforeEach(() => {
+		process.env.CONFIG_DIR = dir;
+	});
+	afterEach(() => {
+		delete process.env.CONFIG_DIR;
+	});
+
+	const send = async (body: unknown, headers: Record<string, string> = { ...AJAX, 'content-type': 'application/json' }) =>
+		settingsSave(ev(post('/api/settings', headers, typeof body === 'string' ? body : JSON.stringify(body))));
+
+	it('API 키를 저장하면 설정 파일로 남는다', async () => {
+		const res = await send({ apiKey: '  new-coding-plan-key  ' });
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({ source: 'saved' });
+		expect(readSavedZaiApiKey()).toBe('new-coding-plan-key');
+	});
+
+	it('빈 키를 보내면 저장한 키를 지운다', async () => {
+		await send({ apiKey: 'temp-key' });
+		await send({ apiKey: '' });
+		expect(readSavedZaiApiKey()).toBe('');
+	});
+
+	it('본문이 JSON 이 아니거나 apiKey 가 문자열이 아니면 400, 헤더가 없으면 403', async () => {
+		await expect(send('not json')).rejects.toMatchObject({ status: 400 });
+		await expect(send({ apiKey: 123 })).rejects.toMatchObject({ status: 400 });
+		await expect(send({ apiKey: 'k' }, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
 	});
 });
