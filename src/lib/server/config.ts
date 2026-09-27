@@ -61,7 +61,8 @@ export const settings = () => {
 	// OCR 은 내부망 mdconv 변환 서비스(jpeg → oMLX PaddleOCR-VL)로 한다. m 은 edge /etc/hosts 에 192.168.1.9 로
 	// 등록돼 있고, Caddy 가 http://m/mdconv/* 를 6000 번(mdconv)으로 프록시한다. 서비스가 떠 있어야 OCR 이 성공한다
 	ocrUrl: process.env.OCR_URL ?? 'http://m/mdconv',
-	analyzeTimeoutMs: Number(process.env.ANALYZE_TIMEOUT_MS ?? 5 * 60_000),
+	// 15 분. 로컬 27B(oMLX Qwen3.8) 같은 느린 모델은 로드+추론만 수 분이 걸린다
+	analyzeTimeoutMs: Number(process.env.ANALYZE_TIMEOUT_MS ?? 15 * 60_000),
 	ocrTimeoutMs: Number(process.env.OCR_TIMEOUT_MS ?? 2 * 60_000),
 		maxAttempts: Number(process.env.ANALYZE_MAX_ATTEMPTS ?? 2),
 		studentName: (process.env.STUDENT_NAME ?? '').trim()

@@ -104,7 +104,32 @@ export function isQuotaOrRateLimitError(err: unknown): boolean {
 	);
 }
 
-/** 코드펜스로 감싸진 경우도 허용해 JSON 본문만 꺼낸다 */
+/** 문자열 이스케이프를 고려해 본문에서 첫 번째 균형 잡힌 {...} 객체 범위를 찾는다 */
+export function firstJsonObject(text: string): string | null {
+	const start = text.indexOf('{');
+	if (start === -1) return null;
+	let depth = 0;
+	let inString = false;
+	let escape = false;
+	for (let i = start; i < text.length; i++) {
+		const ch = text[i];
+		if (inString) {
+			if (escape) escape = false;
+			else if (ch === '\\') escape = true;
+			else if (ch === '"') inString = false;
+			continue;
+		}
+		if (ch === '"') inString = true;
+		else if (ch === '{') depth++;
+		else if (ch === '}' && --depth === 0) return text.slice(start, i + 1);
+	}
+	return null;
+}
+
+/**
+ * 코드펜스로 감싸진 경우, 심지어 모델의 thinking 이 본문에 섞인 경우에도 JSON 을 건진다.
+ * oMLX 의 Qwen 계열은 reasoning 을 content 에 그대로 출력하는 일이 있다.
+ */
 export function parseJsonBody(label: string, text: string): unknown {
 	const body = text
 		.trim()
@@ -113,8 +138,17 @@ export function parseJsonBody(label: string, text: string): unknown {
 	try {
 		return JSON.parse(body);
 	} catch {
-		throw new Error(`${label} 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
+		/* 아래 폴백들 */
 	}
+	const salvage = firstJsonObject(body);
+	if (salvage) {
+		try {
+			return JSON.parse(salvage);
+		} catch {
+			/* 폴백도 실패하면 원인과 함께 아래에서 실패 */
+		}
+	}
+	throw new Error(`${label} 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
 }
 
 const missingKeyError = (provider: string, how: string) => new Error(`${provider} API 키가 설정되지 않았습니다. ${how}`);
@@ -253,6 +287,8 @@ async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 			{ role: 'user', content: promptWithSchema(c.prompt, c.schema) }
 		],
 		jsonMode: true,
+		// Qwen 계열은 thinking 을 본문에 섞어 내보내므로 출력 예산을 넉넉히 둔다
+		extraBody: { max_tokens: 16384 },
 		timeoutMs: s.analyzeTimeoutMs
 	});
 	return { output: parseJsonBody('oMLX', content), model: s.omlxModel };

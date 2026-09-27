@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { makeFakeCli } from './fake-cli';
-import { AGY_MAX_PROMPT_BYTES, codexErrorMessage, parseAgyOutput, parseCodexOutput, runStructured, runText, toGeminiSchema } from './llm';
+import { AGY_MAX_PROMPT_BYTES, codexErrorMessage, firstJsonObject, parseAgyOutput, parseCodexOutput, parseJsonBody, runStructured, runText, toGeminiSchema } from './llm';
 import { buildAnalysisSchema } from './taxonomy';
 import { loadTaxonomy } from './taxonomy';
 
@@ -243,6 +243,14 @@ describe('toGeminiSchema', () => {
 		expect(parseCodexOutput('{"a":1}')).toEqual({ a: 1 });
 		expect(parseCodexOutput('```json\n{"a":1}\n```')).toEqual({ a: 1 });
 		expect(() => parseCodexOutput('말로만 답함')).toThrow(/JSON/);
+	});
+
+	it('parseJsonBody: thinking 이 섞인 출력에서도 첫 균형 객체를 건진다', () => {
+		const noisy = "We need answer user's request: produce valid JSON only. Need think.\n{\"a\":\"결과\"}";
+		expect(parseJsonBody('oMLX', noisy)).toEqual({ a: '결과' });
+		// 문자열 안의 중괄호는 객체 경계가 아니다
+		expect(firstJsonObject('{"s":"안에 { 있음"}')).toBe('{"s":"안에 { 있음"}');
+		expect(() => parseJsonBody('oMLX', '생각만 하고 브레이스 없이 끝남')).toThrow(/JSON 이 아님/);
 	});
 
 	it('codexErrorMessage: ERROR 줄의 JSON 메시지, 일반 문자열, ERROR 가 없을 때', () => {
