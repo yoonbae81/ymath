@@ -72,7 +72,7 @@
 
 ```
 사진 → 축소(긴 변 1600px) + 그레이스케일 JPEG → image.jpg (OCR·LLM 입력과 보관·표시를 겸함)
-     → PaddleOCR(`ocr`) → ocr.md
+     → mdconv(OCR: PaddleOCR-VL via oMLX) → ocr.md
      → LLM(zai/codex/agy)에 사진 + OCR + 지침 + 분류 체계 → record.json
 ```
 
@@ -92,7 +92,7 @@ src/, static/    소스
 
 ## 실행
 
-요구: Node 20+, Z.AI Coding Plan API 키(`user/config/providers.json` 에 입력), `ocr` CLI와 `ocr-server.service`(127.0.0.1:9004) 가동. codex·agy·omlx를 쓸 때는 각 서버·CLI가 필요하다.
+요구: Node 20+, Z.AI Coding Plan API 키(`user/config/providers.json` 에 입력), 내부망 mdconv 서비스(`http://m/mdconv`, OCR 변환 담당 — `m` 은 edge `/etc/hosts` 에 192.168.1.9 로 등록, Caddy 가 `/mdconv/*` 를 6000 번으로 프록시) 가동. codex·agy·omlx를 쓸 때는 각 서버·CLI가 필요하다.
 
 ```sh
 npm install
@@ -135,7 +135,7 @@ journalctl --user -u ymath -f                     # 로그
 | `CODEX_MODEL` | `gpt-5.5` | codex 모델. 이미지 입력을 지원해야 하고, `~/.codex/config.toml`의 기본 모델은 계정에 따라 거부될 수 있어 명시한다 |
 | `ANALYZE_TIMEOUT_MS` | `300000` | 분석 시간 제한 |
 | `ANALYZE_MAX_ATTEMPTS` | `2` | 분석 실패 시 총 시도 횟수 |
-| `OCR_BIN` | `ocr` | 실행 파일 경로 |
+| `OCR_URL` | `http://m/mdconv` | OCR 변환에 쓸 mdconv 서비스 주소(POST `/convert` 로 image.jpg → markdown). `m` 은 edge `/etc/hosts` 에 192.168.1.9 로 등록돼 있고 Caddy 가 `/mdconv/*` → 6000 프록시 |
 | `OCR_TIMEOUT_MS` | `120000` | OCR 시간 제한 |
 | `USER_DIR`, `PROMPTS_DIR`, `CONFIG_DIR` | `./user`, `./user/prompts`, `./user/config` | 위치 변경 |
 | `PASSWORD` | (없음) | 내부망 밖에서 들어올 때 쓰는 비밀번호. **없으면 밖에서는 아무도 못 들어온다** |

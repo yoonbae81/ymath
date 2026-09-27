@@ -24,7 +24,7 @@ Environment=HOST_HEADER=x-forwarded-host
 #  → 감사 로그 ip=unknown 이 보이면 이 설정부터 의심할 것
 # 사진(수 MB)을 받아야 하므로 기본 512KB 제한을 늘린다
 Environment=BODY_SIZE_LIMIT=30M
-# 사용자 서비스의 PATH 에는 ~/.local/bin 이 없다. ocr 이 거기에 있다.
+# OCR 은 내부망 mdconv 서비스(http://m/mdconv, /etc/hosts 의 m=192.168.1.9 → Caddy → 6000)를 HTTP 로 호출하므로 로컬 바이너리가 필요 없다
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 # 밖에서 들어올 때 쓰는 설정은 저장소에 넣지 않고 별도 파일에 둔다(chmod 600):
 #   ~/.config/ymath.env  →  PASSWORD=...  PUBLIC_URL=https://math.example.com  STUDENT_NAME=...
