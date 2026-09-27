@@ -57,10 +57,10 @@ afterEach(() => {
 const run = (r: ItemRecord) => analyzeItem({ record: r, dir: work, ocrText: '$x$' });
 
 describe('분석 LLM 선택', () => {
-	it('기본값은 zai(glm-5.3-flash)', async () => {
-		expect(providerFor(record())).toBe('zai');
+	it('기본값은 omlx(Qwen3.8 27B)', async () => {
+		expect(providerFor(record())).toBe('omlx');
 		const res = await run(record());
-		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3-flash' });
+		expect(res).toMatchObject({ provider: 'omlx', model: 'mlx-community--Qwen3.8-27B-8bit' });
 	});
 
 	it('ANALYZE_PROVIDER=codex 로 서버 기본값을 바꾼다', async () => {
@@ -108,13 +108,13 @@ describe('분석 LLM 선택', () => {
 		expect(Buffer.byteLength(log().promptArg, 'utf8')).toBeLessThan(AGY_MAX_PROMPT_BYTES * 0.6);
 	});
 
-	it('ANALYZE_PROVIDER=agy 로 기본값을 바꾸고, 알 수 없는 값과 삭제된 claude 는 zai 로 둔다', async () => {
+	it('ANALYZE_PROVIDER=agy 로 기본값을 바꾸고, 알 수 없는 값과 삭제된 claude 는 omlx 로 둔다', async () => {
 		process.env.ANALYZE_PROVIDER = 'agy';
 		expect(providerFor(record())).toBe('agy');
 		process.env.ANALYZE_PROVIDER = 'gemini';
-		expect(providerFor(record())).toBe('zai');
+		expect(providerFor(record())).toBe('omlx');
 		process.env.ANALYZE_PROVIDER = 'claude';
-		expect(providerFor(record())).toBe('zai');
+		expect(providerFor(record())).toBe('omlx');
 		// 옛 기록에 claude 가 지정돼 있어도 기본값으로 되돌린다
 		process.env.ANALYZE_PROVIDER = 'codex';
 		expect(providerFor(record('claude' as Provider))).toBe('codex');

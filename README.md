@@ -56,7 +56,7 @@
 
 ## LLM 선택 (GLM / Codex / Agy)
 
-- 기본은 `ANALYZE_PROVIDER`(`zai` | `codex` | `agy`, 기본 zai — GLM 5.3 Flash). `/items`의 상세에서 **다시 분석** 옆 선택 상자로 항목마다 LLM을 골라 재분석할 수 있고, 마지막 선택은 그 항목에 기록된다(`requested_provider`). 업로드 화면은 문제집 선택만 유지한다.
+- 기본은 `ANALYZE_PROVIDER`(`omlx` | `zai` | `codex` | `agy`, 기본 omlx — Qwen3.8 27B). `/items`의 상세에서 **다시 분석** 옆 선택 상자로 항목마다 LLM을 골라 재분석할 수 있고, 마지막 선택은 그 항목에 기록된다(`requested_provider`). 업로드 화면은 문제집 선택만 유지한다.
 - Claude 지원은 제거됐다. 옛 기록에 `requested_provider: claude` 가 남아 있으면 재분석 때 서버 기본값으로 되돌리고, 화면 표시에는 옛 라벨(`Claude`)이 그대로 남는다.
 - z.ai(GLM)는 Z.AI Coding Plan 엔드포인트의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. 각 LLM의 주소·모델·API 키는 **`user/config/providers.json`** 파일 한 곳에서 관리한다(~/.openclaw 의 `models.providers` 와 같은 형식, 커밋 안 됨). 같은 이름의 환경변수가 있으면 그쪽이 우선하고, 어디에도 키가 없으면 분석이 실패하며 사유가 화면에 표시된다.
 - z.ai는 사진을 base64 data URL(`image_url` 콘텐츠 블록)로 메시지에 첨부하므로 **이미지 입력이 되는 모델**을 써야 한다(기본 `glm-5.3-flash` — 네이티브 비전 지원). 텍스트 전용 모델(`glm-5.3`)을 지정하면 사진을 받지 못해 OCR 텍스트만으로 분석한다. GLM-5.3-Flash·GLM-5V 계열은 추론을 강제해서 `thinking`을 끌 수 없어, 텍스트 전용 모델일 때만 thinking을 끼워 보낸다.
@@ -122,7 +122,7 @@ journalctl --user -u ymath -f                     # 로그
 | --- | --- | --- |
 | `DATA_DIR` | `./user/data` | 사진·분석 결과 저장 위치 |
 | `STUDENT_NAME` | (비어있음) | 프롬프트와 분석/보고서에서 사용할 학생 이름(예: `지우`). 설정하지 않으면 자연스러운 기본형("학생", "생각 습관")으로 처리된다 |
-| `ANALYZE_PROVIDER` | `zai` | 분석에 쓸 LLM 기본값: `zai`, `codex`, `agy`. 결과 화면의 **다시 분석**에서 항목별로 바꿀 수 있다 |
+| `ANALYZE_PROVIDER` | `omlx` | 분석에 쓸 LLM 기본값: `omlx`, `zai`, `codex`, `agy`. 결과 화면의 **다시 분석**에서 항목별로 바꿀 수 있다 |
 | `ANALYZE_MODEL` | `glm-5.3-flash` | z.ai 모델. 사진을 첨부하므로 이미지 입력이 되는 모델이어야 한다(`glm-5.3` 은 텍스트 전용). `ZAI_MODEL` 로도 지정할 수 있다(`ANALYZE_MODEL` 이 이긴다) |
 | `ZAI_API_KEY` | (없음) | Z.AI API 키. 보통은 `user/config/providers.json` 의 `zai.apiKey` 를 쓰고, 환경변수가 있으면 그쪽이 이긴다 |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI Coding Plan 엔드포인트. `providers.json` 의 `zai.baseUrl` 으로도 지정 가능 |

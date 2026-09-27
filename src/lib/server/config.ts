@@ -41,9 +41,10 @@ export const settings = () => {
 	const omlx = providers.omlx;
 	return {
 		/** 분석에 쓰는 LLM 기본값. 재분석 때 항목별로 바꿀 수 있다 */
+		// 기본은 내부망 oMLX(Qwen3.8 27B, 멀티모달) — 외부 z.ai 의 장애·할당량과 무관하게 동작한다
 		provider: (PROVIDERS as readonly string[]).includes(process.env.ANALYZE_PROVIDER ?? '')
 			? (process.env.ANALYZE_PROVIDER as Provider)
-			: ('zai' as Provider),
+			: ('omlx' as Provider),
 		zaiApiKey: process.env.ZAI_API_KEY?.trim() || zai?.apiKey || '',
 		zaiBaseUrl: process.env.ZAI_BASE_URL || zai?.baseUrl || 'https://api.z.ai/api/coding/paas/v4',
 		// 사진을 base64 로 첨부하므로 이미지 입력이 되는 모델이어야 한다. glm-5.3 은 텍스트 전용이라 사진을 못 받는다
