@@ -58,9 +58,9 @@
 
 - 기본은 `ANALYZE_PROVIDER`(`zai` | `codex` | `agy`, 기본 zai — GLM 5.3). `/items`의 상세에서 **다시 분석** 옆 선택 상자로 항목마다 LLM을 골라 재분석할 수 있고, 마지막 선택은 그 항목에 기록된다(`requested_provider`). 업로드 화면은 문제집 선택만 유지한다.
 - Claude 지원은 제거됐다. 옛 기록에 `requested_provider: claude` 가 남아 있으면 재분석 때 서버 기본값으로 되돌리고, 화면 표시에는 옛 라벨(`Claude`)이 그대로 남는다.
-- z.ai(GLM)는 Z.AI Coding Plan 엔드포인트(`ZAI_BASE_URL`, 기본 `https://api.z.ai/api/coding/paas/v4`)의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. API 키는 **⚡ 작업 상태 화면의 ⚙️ 분석 설정**에서 저장할 수 있다(우선순위: 환경변수 `ZAI_API_KEY` > 저장한 키). 어디에도 없으면 소스에 기본 키를 두지 않으므로 분석이 실패하고 사유가 화면에 표시된다.
+- z.ai(GLM)는 Z.AI Coding Plan 엔드포인트의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. 각 LLM의 주소·모델·API 키는 **`user/config/providers.json`** 파일 한 곳에서 관리한다(~/.openclaw 의 `models.providers` 와 같은 형식, 커밋 안 됨). 같은 이름의 환경변수가 있으면 그쪽이 우선하고, 어디에도 키가 없으면 분석이 실패하며 사유가 화면에 표시된다.
 - 세 LLM 모두 같은 지침·분류 체계·스키마·가드레일 검사를 거친다. 결과에는 어느 LLM·모델로 분석했는지(`meta.provider`, `meta.model`)가 남는다.
-- olmx(집 내부망 oLMX 서버, Qwen3.8 27B)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 z.ai와 마찬가지로 OCR 텍스트·문제집 정보만으로 분석한다(사진 미전송). 서버가 API 키를 요구하므로 `OLMX_API_KEY` 환경변수가 필요하다. 주소·모델은 `OLMX_BASE_URL`·`OLMX_MODEL`로 바꿀 수 있다.
+- omlx(집 내부망 oMLX 서버, Qwen3.8 27B)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 z.ai와 마찬가지로 OCR 텍스트·문제집 정보만으로 분석한다(사진 미전송). 서버가 API 키를 요구하므로 providers.json 의 `omlx.apiKey` 가 필요하다.
 - codex는 `codex exec --output-schema … -i <사진> -s read-only --ephemeral`로 호출하고 프롬프트는 stdin으로 넘긴다(`src/lib/server/llm.ts`). 사진은 첨부로 전달하므로 파일 시스템·셸이 필요 없어 읽기 전용 샌드박스로 실행한다.
 - agy(Antigravity CLI, Gemini)는 `agy -p <프롬프트> --output-format json --json-schema <파일> --add-dir <항목 폴더>`로 호출한다. 이미지 첨부 옵션이 없어 에이전트가 `view_file` 도구로 사진을 열며, **권한 우회 옵션(`--dangerously-skip-permissions`)은 쓰지 않는다.** 헤드리스에서는 권한 확인창을 띄울 수 없어 셸 명령이 자동 거부되므로, 프롬프트에서 셸 사용을 금지하고 사진의 절대 경로와 `view_file`을 지정한다(안 그러면 열기 전에 `pwd && ls`부터 하려다 빈 응답이 된다). 프롬프트는 `-p` 인자로 넘기므로 120KB를 넘으면 실행하지 않고 오류를 낸다.
 - Gemini는 함수 스키마의 숫자 `enum`을 거부하므로, agy로 보낼 때만 `difficulty`·`severity`를 정수 범위(`minimum`/`maximum`)로 바꿔 보낸다(`toGeminiSchema`). 결과 검증은 원래 스키마로 한다.
@@ -91,7 +91,7 @@ src/, static/    소스
 
 ## 실행
 
-요구: Node 20+, Z.AI Coding Plan API 키(없으면 `/status`의 분석 설정에서 저장), `ocr` CLI와 `ocr-server.service`(127.0.0.1:9004) 가동. codex·agy를 쓸 때는 각 CLI가 필요하다.
+요구: Node 20+, Z.AI Coding Plan API 키(`user/config/providers.json` 에 입력), `ocr` CLI와 `ocr-server.service`(127.0.0.1:9004) 가동. codex·agy·omlx를 쓸 때는 각 서버·CLI가 필요하다.
 
 ```sh
 npm install
@@ -123,11 +123,11 @@ journalctl --user -u ymath -f                     # 로그
 | `STUDENT_NAME` | (비어있음) | 프롬프트와 분석/보고서에서 사용할 학생 이름(예: `지우`). 설정하지 않으면 자연스러운 기본형("학생", "생각 습관")으로 처리된다 |
 | `ANALYZE_PROVIDER` | `zai` | 분석에 쓸 LLM 기본값: `zai`, `codex`, `agy`. 결과 화면의 **다시 분석**에서 항목별로 바꿀 수 있다 |
 | `ANALYZE_MODEL` | `glm-5.3` | z.ai 모델. `ZAI_MODEL` 로도 지정할 수 있다(`ANALYZE_MODEL` 이 이긴다) |
-| `ZAI_API_KEY` | (없음) | Z.AI Coding Plan API 키. **`/status` 화면의 ⚙️ 분석 설정에서 저장**하면 `user/config/zai-api-key`(0600, 커밋 안 됨)에 남고 환경변수가 없을 때 쓰인다. 환경변수가 이긴다. 둘 다 없으면 분석이 실패한다 |
-| `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI Coding Plan 엔드포인트 |
-| `OLMX_BASE_URL` | `http://192.168.1.9:9000/v1` | oLMX(내부망 OpenAI 호환 서버) 주소 |
-| `OLMX_MODEL` | `Qwen3.8 27B` | oLMX에서 쓸 모델 |
-| `OLMX_API_KEY` | (없음) | oLMX 서버의 API 키. 서버가 키를 요구하므로 olmx provider를 쓰려면 필수 |
+| `ZAI_API_KEY` | (없음) | Z.AI API 키. 보통은 `user/config/providers.json` 의 `zai.apiKey` 를 쓰고, 환경변수가 있으면 그쪽이 이긴다 |
+| `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI Coding Plan 엔드포인트. `providers.json` 의 `zai.baseUrl` 으로도 지정 가능 |
+| `OMLX_BASE_URL` | `http://192.168.1.9:9000/v1` | oMLX(내부망 OpenAI 호환 서버) 주소. `providers.json` 의 `omlx.baseUrl` 으로도 지정 가능 |
+| `OMLX_MODEL` | `mlx-community--Qwen3.8-27B-8bit` | oMLX에서 쓸 모델. `providers.json` 의 `omlx.models[0].id` 로도 지정 가능 |
+| `OMLX_API_KEY` | (없음) | oMLX 서버의 API 키. 보통은 `providers.json` 의 `omlx.apiKey` 를 쓴다. 서버가 키를 요구하므로 어느 쪽에든 필요 |
 | `CODEX_BIN` | `codex` | codex 실행 파일 경로 |
 | `AGY_BIN` | `agy` | agy 실행 파일 경로 |
 | `AGY_MODEL` | `gemini-3.1-pro-high` | agy 모델(`agy models`로 목록 확인). 사진을 읽어야 하므로 이미지 입력이 되는 모델 |
