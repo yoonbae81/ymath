@@ -13,7 +13,7 @@ export const configDir = () => resolve(process.env.CONFIG_DIR ?? join(userDir(),
 
 /**
  * user/config/providers.json — LLM별 주소·모델·API 키. ~/.openclaw 의 "models.providers" 와 같은 형식.
- *   { "providers": { "zai": { "baseUrl": "...", "apiKey": "...", "models": [{ "id": "glm-5.3", "name": "GLM 5.3" }] } } }
+ *   { "providers": { "zai": { "baseUrl": "...", "apiKey": "...", "models": [{ "id": "glm-5.3-flash", "name": "GLM 5.3 Flash" }] } } }
  * 커밋되지 않는다(.gitignore). 같은 이름의 환경변수가 있으면 그쪽이 이긴다.
  */
 export interface LlmProviderConfig {
@@ -46,7 +46,8 @@ export const settings = () => {
 			: ('zai' as Provider),
 		zaiApiKey: process.env.ZAI_API_KEY?.trim() || zai?.apiKey || '',
 		zaiBaseUrl: process.env.ZAI_BASE_URL || zai?.baseUrl || 'https://api.z.ai/api/coding/paas/v4',
-		zaiModel: process.env.ANALYZE_MODEL || process.env.ZAI_MODEL || zai?.models?.[0]?.id || 'glm-5.3',
+		// 사진을 base64 로 첨부하므로 이미지 입력이 되는 모델이어야 한다. glm-5.3 은 텍스트 전용이라 사진을 못 받는다
+		zaiModel: process.env.ANALYZE_MODEL || process.env.ZAI_MODEL || zai?.models?.[0]?.id || 'glm-5.3-flash',
 		/** 집 내부망 oMLX 서버(OpenAI 호환, Mac에서 MLX 추론). 서버가 API 키를 요구한다 */
 		omlxBaseUrl: process.env.OMLX_BASE_URL || omlx?.baseUrl || 'http://192.168.1.9:9000/v1',
 		omlxModel: process.env.OMLX_MODEL || omlx?.models?.[0]?.id || 'mlx-community--Qwen3.8-27B-8bit',

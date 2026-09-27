@@ -57,10 +57,10 @@ afterEach(() => {
 const run = (r: ItemRecord) => analyzeItem({ record: r, dir: work, ocrText: '$x$' });
 
 describe('분석 LLM 선택', () => {
-	it('기본값은 zai(glm-5.3)', async () => {
+	it('기본값은 zai(glm-5.3-flash)', async () => {
 		expect(providerFor(record())).toBe('zai');
 		const res = await run(record());
-		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3' });
+		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3-flash' });
 	});
 
 	it('ANALYZE_PROVIDER=codex 로 서버 기본값을 바꾼다', async () => {
@@ -120,7 +120,7 @@ describe('분석 LLM 선택', () => {
 		expect(providerFor(record('claude' as Provider))).toBe('codex');
 	});
 
-	it('zai 로 분석하면 z.ai 엔드포인트를 호출하고 OCR 안내가 프롬프트에 들어간다', async () => {
+	it('zai 로 분석하면 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다', async () => {
 		let capturedBody: any;
 		vi.stubGlobal(
 			'fetch',
@@ -142,9 +142,38 @@ describe('분석 LLM 선택', () => {
 			})
 		);
 		const res = await run(record('zai'));
-		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3', taxonomyIssues: [], guardrailWarnings: [] });
-		expect(capturedBody.model).toBe('glm-5.3');
-		expect(capturedBody.messages[1].content).toContain('제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요');
+		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3-flash', taxonomyIssues: [], guardrailWarnings: [] });
+		expect(capturedBody.model).toBe('glm-5.3-flash');
+		// user 메시지는 [이미지, 텍스트] 배열. beforeEach 에서 'img' 라 쓴 image.jpg 가 base64('aW1n') 로 실려 간다
+		const parts = capturedBody.messages[1].content as any[];
+		expect(parts).toHaveLength(2);
+		expect(parts[0].type).toBe('image_url');
+		expect(parts[0].image_url.url).toBe('data:image/jpeg;base64,aW1n');
+		expect(parts[1].type).toBe('text');
+		expect(parts[1].text).toContain('첨부된 이미지');
+		expect(parts[1].text).toContain('준수해야 할 JSON Schema');
+		// flash 계열은 추론 강제라 thinking 필드를 보내지 않는다
+		expect(capturedBody.thinking).toBeUndefined();
+	});
+
+	it('텍스트 전용 모델(glm-5.3)로 바꾸면 thinking 을 끈다', async () => {
+		process.env.ANALYZE_MODEL = 'glm-5.3';
+		let capturedBody: any;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, opts: any) => {
+				capturedBody = JSON.parse(opts.body);
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						choices: [{ message: { content: JSON.stringify(validAnalysis()) } }]
+					})
+				} as any;
+			})
+		);
+		await run(record('zai'));
+		expect(capturedBody.thinking).toEqual({ type: 'disabled' });
 	});
 
 	it('API 키가 없으면 z.ai 를 호출하지 않고 사유를 알린다', async () => {

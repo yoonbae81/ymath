@@ -11,7 +11,7 @@ export interface StructuredCall {
 	schema: object;
 	/** 작업 디렉터리(임시 파일도 여기에 만들고 지운다) */
 	dir: string;
-	/** 분석할 사진. codex 는 -i 로 첨부하고, agy 는 프롬프트에 적힌 경로를 view_file 로 연다 */
+	/** 분석할 사진. codex 는 -i 로, zai 는 base64 data URL 로 첨부하고, agy 는 프롬프트에 적힌 경로를 view_file 로 연다 */
 	imagePath: string;
 }
 
@@ -122,6 +122,9 @@ const missingKeyError = (provider: string, how: string) => new Error(`${provider
 const MATH_COACH_SYSTEM =
 	'당신은 학생의 수학 오답을 전문적으로 분석하고 코칭하는 수학 교육 전문가입니다. 주어진 JSON Schema를 엄격히 준수하여 순수 JSON 객체 하나만 출력하십시오. 마크다운 코드 블록이나 다른 텍스트는 일체 출력하지 마세요.';
 
+/** OpenAI 호환 멀티모달 콘텐츠 파트. Z.ai 비전 모델은 image_url 에 공개 URL 이나 base64 data URL 을 받는다 */
+type ChatContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
+
 const promptWithSchema = (prompt: string, schema: object) =>
 	`${prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
 
@@ -134,7 +137,8 @@ async function chatCompletion(o: {
 	baseUrl: string;
 	apiKey: string;
 	model: string;
-	messages: { role: 'system' | 'user'; content: string }[];
+	/** content 는 문자열 또는 멀티모달 파트 배열(zai 는 이미지 data URL + 텍스트) */
+	messages: { role: 'system' | 'user'; content: string | ChatContentPart[] }[];
 	/** response_format: json_object 를 보낸다. 미지원 서버를 위해 끌 수 있다 */
 	jsonMode: boolean;
 	extraBody?: Record<string, unknown>;
@@ -198,9 +202,21 @@ async function chatCompletion(o: {
 	}
 }
 
+/**
+ * 모델별 z.ai 요청 옵션. GLM-5.3-Flash·GLM-5V 계열은 추론을 강제해서 thinking 을 끌 수 없으므로
+ * 텍스트 전용 모델(glm-5.3)일 때만 thinking 을 끈다. 추론 토큰이 응답 JSON 과 함께 max_tokens 를
+ * 소비하므로 넉넉하게 둔다.
+ */
+const zaiExtraBody = (model: string): Record<string, unknown> => ({
+	max_tokens: 16384,
+	...(/flash|5v/.test(model) ? {} : { thinking: { type: 'disabled' as const } })
+});
+
 async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우거나 ZAI_API_KEY 환경변수를 설정하세요');
+	// image.jpg 를 base64 data URL 로 메시지에 첨부한다(Z.ai 비전 모델 공식 형식). 기본 모델 glm-5.3-flash 처럼 이미지 입력이 되는 모델이어야 한다
+	const image = `data:image/jpeg;base64,${readFileSync(c.imagePath).toString('base64')}`;
 	const content = await chatCompletion({
 		label: 'z.ai',
 		baseUrl: s.zaiBaseUrl,
@@ -208,16 +224,22 @@ async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 		model: s.zaiModel,
 		messages: [
 			{ role: 'system', content: MATH_COACH_SYSTEM },
-			{ role: 'user', content: promptWithSchema(c.prompt, c.schema) }
+			{
+				role: 'user',
+				content: [
+					{ type: 'image_url', image_url: { url: image } },
+					{ type: 'text', text: promptWithSchema(c.prompt, c.schema) }
+				]
+			}
 		],
 		jsonMode: true,
-		extraBody: { thinking: { type: 'disabled' } },
+		extraBody: zaiExtraBody(s.zaiModel),
 		timeoutMs: s.analyzeTimeoutMs
 	});
 	return { output: parseJsonBody('zai', content), model: s.zaiModel };
 }
 
-/** 집 내부망 oMLX(OpenAI 호환)로 분석한다. 사진 없이 OCR 텍스트·문제집 정보만으로 답한다(z.ai 와 동일) */
+/** 집 내부망 oMLX(OpenAI 호환)로 분석한다. 사진 없이 OCR 텍스트·문제집 정보만으로 답한다(z.ai 와 달리 사진 미전송) */
 async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우거나 OMLX_API_KEY 환경변수를 설정하세요');
@@ -350,7 +372,7 @@ export async function runText(provider: Provider, prompt: string): Promise<{ tex
 			model: s.zaiModel,
 			messages: [{ role: 'user', content: prompt }],
 			jsonMode: false,
-			extraBody: { thinking: { type: 'disabled' } },
+			extraBody: zaiExtraBody(s.zaiModel),
 			timeoutMs: s.analyzeTimeoutMs
 		});
 		return { text: text.trim(), model: s.zaiModel };
