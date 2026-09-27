@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createItem, deleteItem, isValidId, itemDir, knownPatternIds, listRecords, newId, readRecord, updateRecord } from './store';
+import { createItem, deleteItem, isValidId, itemDir, knownPatternIds, listAnalyses, listRecords, newId, readRecord, saveAnalysis, updateRecord } from './store';
 import type { Analysis } from '$lib/types';
 
 const WB = { id: 'w', name: '쎈 중2-1', publisher: '쎈', grade: '중2', semester: 1 };
@@ -80,5 +80,31 @@ describe('store', () => {
 			x.analysis = { error_analysis: { error_pattern_id: 'unconfirmed', misconception: '' } } as unknown as Analysis;
 		});
 		expect(knownPatternIds().map((p) => p.id)).not.toContain('unconfirmed');
+	});
+
+	it('saveAnalysis 는 프로바이더별 파일을 남기고 listAnalyses 는 시간순으로 읽는다', () => {
+		const r = createItem(WB);
+		const mk = (provider: 'zai' | 'omlx', at: string, model = 'm') => ({
+			analysis: { topic: provider } as unknown as Analysis,
+			meta: { provider, model, prompt_version: 'p1', analyzed_at: at },
+			flags: { ocr_missing: false, taxonomy_mismatch: [], guardrail: [] }
+		});
+		saveAnalysis(r.id, mk('omlx', '2026-09-27T10:00:00Z'));
+		saveAnalysis(r.id, mk('zai', '2026-09-27T11:00:00Z'));
+
+		expect(listAnalyses(r.id).map((x) => x.meta.provider)).toEqual(['omlx', 'zai']);
+
+		// 같은 프로바이더로 다시 분석하면 그 파일만 덮어쓴다
+		saveAnalysis(r.id, mk('omlx', '2026-09-27T12:00:00Z', 'm2'));
+		const list = listAnalyses(r.id);
+		expect(list).toHaveLength(2);
+		// 시간순: zai(11시) 다음 omlx(12시)
+		expect(list[0].meta.provider).toBe('zai');
+		expect(list[1].meta.analyzed_at).toBe('2026-09-27T12:00:00Z');
+		expect(list[1].meta.model).toBe('m2');
+	});
+
+	it('listAnalyses 는 항목이 없으면 빈 배열을 돌려준다', () => {
+		expect(listAnalyses('20260101-000000-zzzz')).toEqual([]);
 	});
 });

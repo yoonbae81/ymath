@@ -8,7 +8,7 @@ import {
 	writeFileSync
 } from 'node:fs';
 import { join } from 'node:path';
-import type { ItemRecord, Workbook } from '$lib/types';
+import type { ItemRecord, SavedAnalysis, Workbook } from '$lib/types';
 import { dataDir } from './config';
 import { IMAGE_FILE } from './image';
 
@@ -21,6 +21,7 @@ export const itemDir = (id: string) => {
 	return join(itemsDir(), id);
 };
 const recordPath = (id: string) => join(itemDir(id), 'record.json');
+const ANALYSIS_FILE_RE = /^analysis-([a-z0-9]+)\.json$/;
 
 /** 시간순 정렬이 되는 ID. 예: 20260919-142301-ab12 */
 export function newId(now = new Date()): string {
@@ -80,6 +81,30 @@ export function listRecords(): ItemRecord[] {
 		.map((id) => readRecord(id))
 		.filter((r): r is ItemRecord => r !== null)
 		.sort((a, b) => (a.id < b.id ? 1 : -1));
+}
+
+/** 프로바이더별 분석 파일. 예: analysis-zai.json. 같은 프로바이더로 다시 분석하면 덮어쓴다 */
+export function saveAnalysis(id: string, saved: SavedAnalysis) {
+	const provider = saved.meta.provider;
+	if (!provider) throw new Error('분석 파일을 저장하려면 meta.provider 가 필요함');
+	writeJsonAtomic(join(itemDir(id), `analysis-${provider}.json`), saved);
+}
+
+/** 항목에 남긴 모든 분석을 분석 시각 오래된 순으로 돌려준다 */
+export function listAnalyses(id: string): SavedAnalysis[] {
+	if (!isValidId(id) || !existsSync(itemDir(id))) return [];
+	return readdirSync(itemDir(id))
+		.map((f) => ANALYSIS_FILE_RE.exec(f)?.[1])
+		.filter((p): p is string => !!p)
+		.map((p) => {
+			try {
+				return JSON.parse(readFileSync(join(itemDir(id), `analysis-${p}.json`), 'utf8')) as SavedAnalysis;
+			} catch {
+				return null; // 깨진 파일은 무시한다
+			}
+		})
+		.filter((a): a is SavedAnalysis => a !== null)
+		.sort((a, b) => (a.meta.analyzed_at < b.meta.analyzed_at ? -1 : 1));
 }
 
 export function deleteItem(id: string): boolean {

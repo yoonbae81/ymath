@@ -10,10 +10,11 @@ vi.mock('$lib/server/queue', () => ({ getQueue: () => ({ enqueue }) }));
 import { POST as upload } from './upload/+server';
 import { DELETE as remove } from './items/[id]/+server';
 import { POST as retry } from './items/[id]/retry/+server';
+import { GET as analyses } from './items/[id]/analyses/+server';
 import { POST as feedback } from './items/[id]/feedback/+server';
 import { POST as viewed } from './items/[id]/viewed/+server';
 import { POST as favorite } from './items/[id]/favorite/+server';
-import { createItem, itemDir, readRecord, updateRecord } from '$lib/server/store';
+import { createItem, itemDir, readRecord, saveAnalysis, updateRecord } from '$lib/server/store';
 import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 import { currentFeedback, type Analysis } from '$lib/types';
 
@@ -347,5 +348,31 @@ describe('POST /api/items/[id]/favorite', () => {
 		const id = createItem(WB).id;
 		await expect(send(id, { favorite: true }, { 'content-type': 'application/json' })).rejects.toMatchObject({ status: 403 });
 		await expect(send('20260101-000000-zzzz', { favorite: true })).rejects.toMatchObject({ status: 404 });
+	});
+});
+
+describe('GET /api/items/[id]/analyses', () => {
+	const get = (id: string) => new Request(`http://ymath.test/api/items/${id}/analyses`);
+	const saved = (provider: 'zai' | 'omlx', at: string) => ({
+		analysis: { topic: provider } as unknown as Analysis,
+		meta: { provider, model: 'm', prompt_version: 'p1', analyzed_at: at },
+		flags: { ocr_missing: false, taxonomy_mismatch: [], guardrail: [] }
+	});
+
+	it('저장된 분석 파일을 시간순으로 돌려준다', async () => {
+		const id = createItem(WB).id;
+		saveAnalysis(id, saved('zai', '2026-09-27T10:00:00Z'));
+		saveAnalysis(id, saved('omlx', '2026-09-27T11:00:00Z'));
+		const res = await analyses(ev(get(id), { id }));
+		expect(res.status).toBe(200);
+		const { analyses: list } = await res.json();
+		expect(list.map((x: { meta: { provider: string } }) => x.meta.provider)).toEqual(['zai', 'omlx']);
+	});
+
+	it('분석이 없으면 빈 배열, 잘못된 ID 는 400', async () => {
+		const empty = async () => analyses(ev(get('20260101-000000-zzzz'), { id: '20260101-000000-zzzz' }));
+		expect((await (await empty()).json()).analyses).toEqual([]);
+		const bad = async () => analyses(ev(get('bad'), { id: 'bad' }));
+		await expect(bad()).rejects.toMatchObject({ status: 400 });
 	});
 });

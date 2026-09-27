@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JobQueue, type QueueDeps } from './queue';
 import { QuotaExceededError } from './llm';
-import { createItem, itemDir, readRecord, updateRecord } from './store';
+import { createItem, itemDir, listAnalyses, readRecord, updateRecord } from './store';
 import type { Analysis, Status } from '$lib/types';
 
 const WB = { id: 'w', name: '쎈 중2-1', publisher: '쎈', grade: '중2', semester: 1 };
@@ -195,6 +195,87 @@ describe('JobQueue', () => {
 		await q.idle();
 		expect(maxActive).toBe(1);
 		expect(order).toEqual([a.id, b.id]);
+	});
+
+	it('같은 프로바이더끼리는 동시에 하나씩만 돌린다', async () => {
+		const a = createItem(WB, new Date(2026, 8, 19, 10, 0, 0));
+		const b = createItem(WB, new Date(2026, 8, 19, 10, 0, 1));
+		updateRecord(a.id, (r) => {
+			r.requested_provider = 'zai';
+		});
+		updateRecord(b.id, (r) => {
+			r.requested_provider = 'zai';
+		});
+		let active = 0;
+		let maxActive = 0;
+		const q = new JobQueue(
+			okDeps({
+				analyze: async () => {
+					active++;
+					maxActive = Math.max(maxActive, active);
+					await new Promise((r) => setTimeout(r, 20));
+					active--;
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+				}
+			})
+		);
+		q.enqueue(a.id);
+		q.enqueue(b.id);
+		await q.idle();
+		expect(maxActive).toBe(1);
+	});
+
+	it('omlx 분석이 막혀 있어도 다른 프로바이더 항목은 병렬로 처리한다', async () => {
+		const a = createItem(WB, new Date(2026, 8, 19, 10, 0, 0));
+		const b = createItem(WB, new Date(2026, 8, 19, 10, 0, 1));
+		updateRecord(b.id, (r) => {
+			r.requested_provider = 'zai';
+		});
+		let release!: () => void;
+		const gate = new Promise<void>((res) => (release = res));
+		let active = 0;
+		let maxActive = 0;
+		let zaiFinished = false;
+		const q = new JobQueue(
+			okDeps({
+				analyze: async ({ record }) => {
+					active++;
+					maxActive = Math.max(maxActive, active);
+					if (record.requested_provider === 'zai') zaiFinished = true;
+					else await gate;
+					active--;
+					return {
+						analysis: fakeAnalysis,
+						provider: record.requested_provider ?? 'omlx',
+						model: 'm',
+						promptVersion: 'p',
+						taxonomyIssues: [],
+						guardrailWarnings: []
+					};
+				}
+			})
+		);
+		q.enqueue(a.id);
+		q.enqueue(b.id);
+		await new Promise((r) => setTimeout(r, 30));
+		expect(zaiFinished).toBe(true); // omlx(a) 가 게이트로 막혀 있어도 zai(b) 는 끝난다
+		expect(maxActive).toBe(2);
+		release();
+		await q.idle();
+		expect(readRecord(a.id)!.status).toBe('done');
+	});
+
+	it('분석이 끝나면 analysis-<provider>.json 에 결과를 남긴다', async () => {
+		const item = createItem(WB);
+		const q = new JobQueue(okDeps());
+		q.enqueue(item.id);
+		await q.idle();
+
+		expect(readdirSync(itemDir(item.id))).toContain('analysis-zai.json');
+		const saved = JSON.parse(readFileSync(join(itemDir(item.id), 'analysis-zai.json'), 'utf8'));
+		expect(saved.analysis).toEqual(fakeAnalysis);
+		expect(saved.meta).toMatchObject({ provider: 'zai', model: 'glm-5.3' });
+		expect(listAnalyses(item.id)).toHaveLength(1);
 	});
 
 	it('recover 는 처리 중이던 항목만 오래된 순으로 다시 처리한다', async () => {

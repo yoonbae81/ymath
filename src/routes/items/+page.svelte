@@ -22,7 +22,8 @@
 		providerLabel,
 		type FeedbackChoice,
 		type ItemRecord,
-		type Provider
+		type Provider,
+		type SavedAnalysis
 	} from '$lib/types';
 
 	let { data } = $props();
@@ -54,6 +55,23 @@
 	const unreviewed = (i: ItemRecord) => i.status === 'done' && !currentFeedback(i);
 	const unreviewedCount = $derived(data.items.filter(unreviewed).length);
 	const favoriteCount = $derived(data.items.filter((i) => i.favorite).length);
+
+	// 프로바이더별 분석 파일(analysis-<provider>.json). 2개 이상이면 상세에서 탭으로 전환한다
+	let analyses = $state<SavedAnalysis[]>([]);
+	let tabIdx = $state<number | null>(null);
+	let loadedKey = $state('');
+	const viewCount = $derived(analyses.length);
+	const view = $derived(viewCount > 1 && tabIdx !== null ? (analyses[tabIdx] ?? null) : null);
+	const viewAnalysis = $derived(view?.analysis ?? open?.analysis ?? null);
+	const viewMeta = $derived(view?.meta ?? open?.meta ?? null);
+	// 하단 메타 줄. 지금 보고 있는 분석(탭) 기준으로 쓴다
+	const metaLine = $derived.by(() => {
+		const m = viewMeta;
+		if (!m) return null;
+		const name = `${m.provider ? `${providerLabel(m.provider)} ` : ''}${m.model}`;
+		const trust = viewAnalysis ? ` · 신뢰도 ${viewAnalysis.confidence}` : '';
+		return `${name} · 지침 ${m.prompt_version}${trust} · ${when(m.analyzed_at || open?.created_at || '')}`;
+	});
 
 	const filtered = $derived(
 		data.items.filter(
@@ -98,6 +116,31 @@
 		}
 	}
 
+	// 상세를 열면 저장된 분석 파일 목록을 읽는다. 재분석으로 analyzed_at 이 바뀌면 다시 읽는다
+	$effect(() => {
+		const id = openId;
+		const item = open;
+		if (!id || !item || item.status !== 'done') return;
+		const key = `${id}:${item.meta?.analyzed_at ?? ''}`;
+		if (loadedKey === key) return;
+		loadedKey = key;
+		loadAnalyses(id, item.meta?.analyzed_at);
+	});
+	async function loadAnalyses(id: string, currentAnalyzedAt?: string) {
+		try {
+			const res = await fetch(`${base}/api/items/${id}/analyses`);
+			if (!res.ok) return;
+			const d = (await res.json()) as { analyses: SavedAnalysis[] };
+			if (openId !== id) return;
+			analyses = d.analyses;
+			const idx = currentAnalyzedAt ? d.analyses.findIndex((x) => x.meta.analyzed_at === currentAnalyzedAt) : -1;
+			tabIdx = idx >= 0 ? idx : d.analyses.length > 0 ? d.analyses.length - 1 : null;
+		} catch {
+			// 조회에 실패하면 record.json 의 마지막 분석 하나만 보여 준다
+			analyses = [];
+		}
+	}
+
 	// 분석 반응(라디오). 이미 남긴 답이 있으면 '수정'을 눌러야 다시 열린다
 	let fbChoice = $state<FeedbackChoice | null>(null);
 	let fbComment = $state('');
@@ -117,6 +160,9 @@
 		fbChoice = null;
 		fbComment = '';
 		fbEditing = false;
+		analyses = [];
+		tabIdx = null;
+		loadedKey = '';
 		const url = new URL(page.url);
 		if (id) url.searchParams.set('id', id);
 		else url.searchParams.delete('id');
@@ -262,7 +308,7 @@
 </div>
 
 {#if open}
-	{@const a = open.analysis}
+	{@const a = viewAnalysis}
 	{@const openNum = problemNumber(open)}
 	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && show(null)}>
 		<article class="sheet" aria-label="오답 상세">
@@ -293,6 +339,16 @@
 				</div>
 				<button class="close" aria-label="닫기" onclick={() => show(null)}>✕</button>
 			</header>
+
+			{#if viewCount > 1 && analyses}
+				<div class="tabs" role="tablist" aria-label="저장된 분석 전환">
+					{#each analyses as t, i (t.meta.analyzed_at)}
+						<button role="tab" aria-selected={tabIdx === i} class:on={tabIdx === i} onclick={() => (tabIdx = i)}>
+							{providerLabel(t.meta.provider)}
+						</button>
+					{/each}
+				</div>
+			{/if}
 
 			{#if showPhotos}
 				<div class="photo-box">
@@ -456,13 +512,11 @@
 					</section>
 				{/if}
 
-				{#if open.meta}
-					<p class="muted">
-						{open.meta.provider ? `${providerLabel(open.meta.provider)} ` : ''}{open.meta.model} · 지침 {open.meta.prompt_version} · 신뢰도 {a.confidence} · {when(open.meta.analyzed_at || open.created_at)}
-					</p>
-				{:else}
-					<p class="muted">{when(open.created_at)}</p>
-				{/if}
+			{#if metaLine}
+				<p class="muted">{metaLine}</p>
+			{:else}
+				<p class="muted">{when(open.created_at)}</p>
+			{/if}
 			{:else if open.status !== 'failed'}
 				<p class="empty">분석이 끝나면 여기에 나와요.</p>
 			{/if}
@@ -685,6 +739,29 @@
 
 	.title-row :global(.badge.date) {
 		margin-left: auto;
+	}
+	.tabs {
+		display: flex;
+		gap: 6px;
+		overflow-x: auto;
+		margin: 0 0 10px;
+		padding-bottom: 2px;
+	}
+	.tabs button {
+		flex: none;
+		padding: 8px 14px;
+		border-radius: 999px;
+		border: 1px solid var(--line);
+		background: var(--surface);
+		color: var(--text);
+		font-weight: 600;
+		font-size: 0.9rem;
+		cursor: pointer;
+	}
+	.tabs button.on {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
 	}
 	.close {
 		border: none;

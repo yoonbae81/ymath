@@ -3,6 +3,8 @@
 문제집에서 틀린 문제를 폰으로 찍어 올리면 LLM이 문제와 풀이를 분석해 JSON으로 저장한다.
 사용자가 하는 일은 **문제집 버튼 선택 + 사진 촬영**뿐이다.
 
+앱은 `/math` 하위 경로에 있고, 아래 경로 앞에 `/math` 이 붙는다(배포·운영 참고).
+
 - `/upload` — 📷 업로드: 문제집 큰 버튼 → 카메라 → 자동 분석 큐 등록
 - `/items` — 📋 문제별: 오답 분석 결과 확인(영역·문제집·오류유형·상태 필터, 재분석, 삭제)
 - `/areas` — 📊 영역별: 대수·기하·함수 등 영역별 통계 및 취약점 분석 보고서
@@ -68,6 +70,16 @@
 - agy는 대화 기록을 자체 저장소(`~/.gemini/antigravity-cli`)에 남기며 끄는 옵션이 없다. 분석한 사진 경로와 결과가 거기 남는다.
 - codex는 `~/.codex/config.toml`을 읽으므로 **codex 버전이 설정 파일 형식과 맞아야** 한다. 또한 ChatGPT 계정의 사용량 한도에 걸리면 분석이 `failed`가 되고 사유(예: usage limit)가 화면에 표시된다.
 
+## 여러 LLM 분석 비교 (탭)
+
+한 항목에 서로 다른 LLM으로 여러 번 분석한 결과를 함께 남기고, 상세 화면에서 탭으로 골라 본다.
+
+- **저장 위치**: 분석이 성공할 때마다 항목 폴더에 `analysis-<llm>.json`(예: `analysis-zai.json`, `analysis-omlx.json`)을 쓴다. 같은 LLM으로 다시 분석하면 그 파일만 덮어쓰고, 다른 LLM이면 파일이 하나 더 생긴다. 쓰기를 `record.json` 갱신보다 먼저 하므로, 파일 저장이 실패하면 그 분석은 실패로 처리돼 재시도된다.
+- **탭 표시**: `/items` 상세 모달에 분석이 2개 이상이면 탭이 뜬다(기본은 가장 최근 분석). 모달을 열 때 `GET /api/items/<id>/analyses` 로 파일 목록을 받아오고, 탭을 바꾸면 저장된 결과를 그대로 보여 준다(재분석 요청은 하지 않는다).
+- **`record.json` 은 마지막 분석만** 가진다. 목록 카드·피드백·영역별 통계·보고서가 쓰는 값이 여기 있으므로, 어느 LLM 분석을 보고 통계를 낸 것인지 잊지 않도록 탭 기본값을 항상 여기서 맞춘다.
+- **한계**: 이 기능은 분석 파일이 생긴 뒤부터 동작한다. 배포 전에 분석된 기존 항목에는 `record.json` 의 마지막 분석만 있어 탭이 1개로 보인다(재분석 한 번이면 파일이 생겨 탭이 열린다). 또한 읽기 전용 게스트(`/s/…` 공유 링크)는 분석 목록 API 가 403 이므로 탭 없이 마지막 분석만 본다.
+- 파일은 프로바이더별이라 같은 LLM의 다른 모델로 분석하면 이전 모델 결과가 덮어써진다. 모델별 보존이 필요하면 파일명에 모델을 넣도록 바꿔야 한다(현재는 `analysis-<llm>.json`).
+
 ## 동작
 
 ```
@@ -76,9 +88,10 @@
      → LLM(zai/codex/agy)에 사진 + OCR + 지침 + 분류 체계 → record.json
 ```
 
-- 큐는 프로세스 내 단일 워커. 서버가 재시작돼도 `record.json`의 상태로 이어서 처리한다.
+- 큐는 LLM(프로바이더)별 레인으로 나눠 돈다. 같은 LLM끼리는 하나씩 직렬(내부망 omlx GPU 독점 방지), 서로 다른 LLM끼리는 병렬로 처리한다(omlx 가 밀려 있어도 zai 항목은 기다리지 않는다). 서버가 재시작돼도 `record.json`의 상태로 이어서 처리한다.
+- 분석이 끝나면 항목 폴더에 `analysis-<llm>.json`(예: `analysis-zai.json`)으로 프로바이더별로 남긴다. 같은 LLM으로 다시 분석하면 덮어쓰고, 다른 LLM으로 분석하면 파일이 늘어나 `/items` 상세에서 탭으로 전환해 볼 수 있다. `record.json`의 `analysis`는 마지막 분석(목록·보고서·통계는 이것을 쓴다).
 - OCR이 실패해도 사진만으로 분석을 계속한다(`flags.ocr_missing`).
-- 문제 1개당 `user/data/items/<id>/`: `record.json`, `image.jpg`(개당 약 150KB), `ocr.md`. 원본은 저장하지 않는다.
+- 문제 1개당 `user/data/items/<id>/`: `record.json`, `image.jpg`(개당 약 150KB), `ocr.md`, `analysis-<llm>.json`. 원본은 저장하지 않는다.
 - 이미지는 하나만 저장한다. 처음에는 16색 디더링 PNG를 따로 보관했지만 실제 종이 사진에서는 디더링 노이즈가 압축되지 않아 JPEG보다 2.6배(약 430KB 대 150KB) 커서, 용량을 줄이려는 목적에 반하므로 없앴다. 더 줄이려면 `src/lib/server/image.ts`의 `MAX_SIDE`와 JPEG `quality`를 낮춘다.
 
 ## 폴더 구조
@@ -104,17 +117,43 @@ npm run check          # 타입 검사
 
 ## 배포 (이 호스트에 설치됨)
 
-- 앱은 **루트(`/`)에서** 응답한다(vite.config.ts의 `paths.base`, 빌드 시점 고정). 2026-09 터널 전환 때 `/ymath` base를 제거했다. 하위 경로로 빌드하려면 `BASE_PATH=/other npm run build`.
+- 앱은 **`/math` 하위 경로**에서 응답한다(`vite.config.ts`의 `paths.base` 기본값 `/math`, 빌드 시점 고정). 즉 모든 경로에 `/math` 이 붙는다. 루트(`/`)로 내려앉히려면 `BASE_PATH=/ npm run build` 로 다시 빌드하고, `PUBLIC_URL` 과 터널 경로도 함께 바꿔야 한다.
 - systemd 사용자 서비스 `ymath`가 `0.0.0.0:3141`에서 실행된다(`user/deploy/ymath.service`).
 - 외부는 cloudflared 터널 `math`가 `math.example.com` → `127.0.0.1:3141`로 연결한다. TLS는 Cloudflare 엣지가 담당하므로 자체 인증서·nginx가 없다.
   사진 업로드를 위해 `BODY_SIZE_LIMIT=30M`을 서비스에 넣는다(기본 512KB면 폰 사진이 413으로 막힌다).
-- 접속: 내부망 폰/PC는 `http://192.168.1.x:3141/upload` (로그인 없음), 외부는 `https://math.example.com/upload` (PASSWORD 로그인).
+- 접속: 내부망 폰/PC는 `http://192.168.1.x:3141/math/upload` (로그인 없음), 외부는 `https://math.example.com/math/upload` (PASSWORD 로그인).
 
 ```sh
 npm run build && systemctl --user restart ymath   # 코드·설정(workbooks.json은 재시작 불필요) 반영
 systemctl --user status ymath                     # 상태
 journalctl --user -u ymath -f                     # 로그
 ```
+
+재시작하면 진행 중(1건)인 항목은 `record.json` 상태로 보고 시작 시 큐에 다시 들어간다(중간 결과는 버려지고 처음부터 다시 분석한다). 그래서 배포 전에 분석이 돌고 있으면 재시작 후 그 항목만 한 번 더 돈다.
+
+개발 PC에서 edge 에 코드를 올릴 때는 `rsync` 가 없을 수 있어 `tar` 파이프를 쓴다(`.git`·`user/`·`.build` 는 건드리지 않는다).
+
+```sh
+tar -cf - src/lib/server/queue.ts src/lib/server/store.ts | ssh edge 'tar -xf - -C /opt/ymath'
+ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
+```
+
+## 운영 점검 · 장애 대응
+
+- **큐 상태**: `/math/status` 화면이 실시간이다. 서버에서 곧바로 세려면 항목 폴더를 센다.
+  ```sh
+  ssh edge 'cd /opt/ymath && python3 -c "
+  import json,glob,collections
+  c=collections.Counter(json.load(open(p))[\"status\"] for p in glob.glob(\"user/data/items/*/record.json\"))
+  print(dict(c))"'
+  ```
+  `analyzing` 이 2 이상이면 프로바이더가 서로 다른 항목이 동시에 돌고 있는 것이다(정상). `queued` 가 쌓여 있으면 그 프로바이더의 흐름이 막힌 것이다.
+- **base 경로를 빼먹으면 404**: 앱은 `/math` 아래에 있으므로 상태 확인도 `curl http://127.0.0.1:3141/math/items` 처럼 경로에 `/math` 이 들어가야 한다. 루트로 조회하면 404 가 뜨고, 그 404 는 경로 착각이지 장애가 아니다.
+- **`fetch failed`**: OCR(`http://m/mdconv`)과 omlx(`http://192.168.1.9:9000/v1`)가 **같은 내부망 서버(192.168.1.9)** 를 쓴다. 이 호스트가 죽거나 재시작되면 OCR 과 omlx 분석이 함께 `fetch failed` 로 실패한다. 코드 문제는 아니므로 해당 서버가 살아난 뒤 `/items` 에서 **다시 분석** 하면 된다(재분석 큐는 상태만 되돌리면 서버가 이어받는다).
+- **`분석 시간 초과(900초)`**: omlx 처럼 느린 로컬 모델이 이 한도를 넘으면 실패로 기록되고 1회 자동 재시도한다(`ANALYZE_MAX_ATTEMPTS`, 기본 2). 한도가 모자라면 `ANALYZE_TIMEOUT_MS` 를 올리되, 느린 원인을 먼저 확인한다(서버 부하·모델 교체).
+- **`정답 노출 가드레일 위반`**: LLM 결과에 정답·등식이 섞여 저장하지 않고, 위반 사유를 힌트로 주어 1회 자동 재지도로 다시 돌린다. 두 번 다 실패하면 `failed` 로 남고 사유가 화면에 보인다.
+- **재시도 큐 되돌리기**: `failed` 항목이 한꺼번에 쌓였을 때 서버를 재시작해도 `queued` 로 되돌아가지 않는다(재시작은 진행 중 항목만 회수한다). 그럴 때는 항목 `record.json` 을 `queued` 로 되돌린 뒤 서비스를 재시작한다.
+- **비밀값**: `user/config/providers.json` 과 `~/.config/ymath.env` 에 API 키·비밀번호가 있다. 로그나 문서에 값이 새지 않게 하고, 커밋 대상이 아니다.
 
 ## 환경변수
 

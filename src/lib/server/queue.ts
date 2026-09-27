@@ -1,11 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ACTIVE_STATUSES } from '$lib/types';
-import { analyzeItem, type Analyzer } from './analyze';
+import type { Provider } from '$lib/types';
+import { analyzeItem, providerFor, type Analyzer } from './analyze';
 import { settings } from './config';
 import { isQuotaOrRateLimitError } from './llm';
 import { runOcr } from './ocr';
-import { itemDir, listRecords, readRecord, updateRecord } from './store';
+import { itemDir, listRecords, readRecord, saveAnalysis, updateRecord } from './store';
 
 /** 할당량 소진 또는 429 오류 시 재시도 대기 시간 (기본 10분) */
 export const quotaRetryDelayMs = () => Number(process.env.QUOTA_RETRY_DELAY_MS ?? 10 * 60_000);
@@ -17,19 +18,32 @@ export interface QueueDeps {
 }
 
 /**
- * 프로세스 내 단일 워커 큐. 상태는 record.json 에 있으므로 서버가 재시작돼도 recover() 로 이어간다.
- * 상태: queued → ocr → analyzing → done | failed
+ * 프로세스 내 프로바이더별 레인 큐. 같은 LLM(예: 내부망 omlx GPU)끼리는 하나씩 직렬로 처리하고,
+ * 서로 다른 프로바이더(omlx 대기 중에도 zai 등 외부 API)끼리는 병렬로 돈다. 상태는 record.json 에
+ * 있으므로 서버가 재시작돼도 recover() 로 이어간다. 상태: queued → ocr → analyzing → done | failed
  */
 export class JobQueue {
-	private pending: string[] = [];
-	private running = false;
+	private lanes = new Map<Provider, string[]>();
+	private runningLanes = new Set<Provider>();
+	/** 어떤 레인에든 대기 중인 id — 레인 간 중복 등록을 막는다 */
+	private queued = new Set<string>();
 	private waiters: (() => void)[] = [];
 
 	constructor(private deps: QueueDeps) {}
 
+	private laneOf(id: string): Provider {
+		const rec = readRecord(id);
+		return rec ? providerFor(rec) : settings().provider;
+	}
+
 	enqueue(id: string) {
-		if (!this.pending.includes(id)) this.pending.push(id);
-		void this.drain();
+		if (this.queued.has(id)) return;
+		const lane = this.laneOf(id);
+		this.queued.add(id);
+		const q = this.lanes.get(lane) ?? [];
+		q.push(id);
+		this.lanes.set(lane, q);
+		void this.drain(lane);
 	}
 
 	/** 서버 시작 시 처리 중이던 항목을 다시 큐에 넣는다(오래된 것부터). */
@@ -41,18 +55,23 @@ export class JobQueue {
 		return stuck.length;
 	}
 
-	/** 큐가 빌 때까지 기다린다(테스트용) */
+	/** 모든 레인이 빌 때까지 기다린다(테스트용) */
 	idle(): Promise<void> {
-		if (!this.running && this.pending.length === 0) return Promise.resolve();
+		if (this.queued.size === 0 && this.runningLanes.size === 0) return Promise.resolve();
 		return new Promise((res) => this.waiters.push(res));
 	}
 
-	private async drain() {
-		if (this.running) return;
-		this.running = true;
+	private releaseIfIdle() {
+		if (this.queued.size === 0 && this.runningLanes.size === 0) this.waiters.splice(0).forEach((w) => w());
+	}
+
+	private async drain(lane: Provider) {
+		if (this.runningLanes.has(lane)) return;
+		this.runningLanes.add(lane);
 		try {
 			let id: string | undefined;
-			while ((id = this.pending.shift())) {
+			while ((id = this.lanes.get(lane)?.shift())) {
+				this.queued.delete(id);
 				try {
 					await this.process(id);
 				} catch (e) {
@@ -61,8 +80,8 @@ export class JobQueue {
 				}
 			}
 		} finally {
-			this.running = false;
-			this.waiters.splice(0).forEach((w) => w());
+			this.runningLanes.delete(lane);
+			this.releaseIfIdle();
 		}
 	}
 
@@ -100,12 +119,21 @@ export class JobQueue {
 			try {
 				const record = readRecord(id)!;
 				const res = await this.deps.analyze({ record, dir, ocrText, hint: lastError || undefined });
+				const meta = {
+					provider: res.provider,
+					model: res.model,
+					prompt_version: res.promptVersion,
+					analyzed_at: new Date().toISOString()
+				};
+				const flags = { ocr_missing: ocrMissing, taxonomy_mismatch: res.taxonomyIssues, guardrail: res.guardrailWarnings };
+				// 파일을 먼저 쓴다. 쓰기가 실패하면 이 시도가 실패로 처리돼 재시도한다
+				saveAnalysis(id, { analysis: res.analysis, meta, flags });
 				updateRecord(id, (r) => {
 					r.status = 'done';
 					r.error = null;
 					r.analysis = res.analysis;
-					r.flags = { ocr_missing: ocrMissing, taxonomy_mismatch: res.taxonomyIssues, guardrail: res.guardrailWarnings };
-					r.meta = { provider: res.provider, model: res.model, prompt_version: res.promptVersion, analyzed_at: new Date().toISOString() };
+					r.flags = flags;
+					r.meta = meta;
 				});
 				return;
 			} catch (e) {

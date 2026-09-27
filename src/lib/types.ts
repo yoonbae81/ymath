@@ -126,6 +126,13 @@ export interface ItemRecord {
 	favorite?: boolean;
 }
 
+/** 항목 폴더의 analysis-<provider>.json 에 프로바이더별로 남기는 분석 한 건. record.json 은 마지막 분석만 가진다 */
+export interface SavedAnalysis {
+	analysis: Analysis;
+	meta: { provider?: Provider; model: string; prompt_version: string; analyzed_at: string };
+	flags: RecordFlags;
+}
+
 /** 지금 보이는 분석에 남긴 반응. 재분석으로 분석이 바뀌었으면 없는 것으로 본다 */
 export function currentFeedback(r: Pick<ItemRecord, 'meta' | 'feedback'>): Feedback | null {
 	if (!r.meta) return null;
