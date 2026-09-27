@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,11 +18,11 @@ beforeEach(() => {
 	process.env.FAKE_LOG = join(work, 'log.json');
 	process.env.FAKE_OUT = join(work, 'out.json');
 	process.env.CODEX_BIN = makeFakeCli('codex');
-	process.env.CLAUDE_BIN = makeFakeCli('claude');
 	process.env.AGY_BIN = makeFakeCli('agy');
 });
 afterEach(() => {
-	for (const k of ['FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CLAUDE_BIN', 'CODEX_MODEL', 'AGY_BIN', 'AGY_MODEL']) delete process.env[k];
+	vi.restoreAllMocks();
+	for (const k of ['FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CODEX_MODEL', 'AGY_BIN', 'AGY_MODEL', 'OLMX_API_KEY']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
 
@@ -80,15 +80,10 @@ describe('codex (구조화)', () => {
 	});
 });
 
-describe('claude (구조화, 기존 동작 유지)', () => {
-	it('JSON 스키마·Read 도구·stdin 프롬프트로 호출한다', async () => {
-		const r = await runStructured('claude', call());
-		expect(r).toEqual({ output: { a: '결과' }, model: 'sonnet' });
-		const { args, stdin } = log();
-		expect(stdin).toBe('프롬프트 본문');
-		expect(args).toEqual(expect.arrayContaining(['-p', '--output-format', 'json', '--no-session-persistence']));
-		expect(JSON.parse(args[args.indexOf('--json-schema') + 1])).toEqual(SCHEMA);
-		expect(args.slice(args.indexOf('--tools'), args.indexOf('--tools') + 2)).toEqual(['--tools', 'Read']);
+describe('알 수 없는 provider', () => {
+	it('타입 검사를 우회한 옛 값(claude)은 실행하지 않고 오류를 낸다', async () => {
+		await expect(runStructured('claude' as never, call())).rejects.toThrow(/사용할 수 없는 LLM/);
+		expect(existsSync(process.env.FAKE_LOG!)).toBe(false);
 	});
 });
 
@@ -148,6 +143,31 @@ describe('agy (구조화)', () => {
 });
 
 describe('runText', () => {
+	it('olmx: OpenAI 호환 엔드포인트로 본문을 받는다', async () => {
+		process.env.OLMX_API_KEY = 'k';
+		let url = '';
+		let body: any;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (u: string, opts: any) => {
+				url = u;
+				body = JSON.parse(opts.body);
+				return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '보고서 본문' } }] }) };
+			})
+		);
+		const r = await runText('olmx', '써 줘');
+		expect(r).toEqual({ text: '보고서 본문', model: 'Qwen3.8 27B' });
+		expect(url).toBe('http://192.168.1.9:9000/v1/chat/completions');
+		expect(body.model).toBe('Qwen3.8 27B');
+		// 본문 요청에는 JSON 모드를 쓰지 않는다
+		expect(body.response_format).toBeUndefined();
+		expect(body.messages).toEqual([{ role: 'user', content: '써 줘' }]);
+	});
+
+	it('olmx: 키가 없으면 호출하지 않고 오류', async () => {
+		await expect(runText('olmx', 'x')).rejects.toThrow(/oLMX API 키가 설정되지 않았습니다/);
+	});
+
 	it('agy: 도구를 쓰지 말라는 지시를 붙여 본문을 받는다', async () => {
 		const r = await runText('agy', '보고서를 써 줘');
 		expect(r).toEqual({ text: '본문', model: 'gemini-3.1-pro-high' });

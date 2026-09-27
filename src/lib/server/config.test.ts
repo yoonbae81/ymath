@@ -2,7 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { gradeRank, loadWorkbooks, renderPrompt, sortWorkbooks } from './config';
+import {
+	deleteSavedZaiApiKey,
+	gradeRank,
+	loadWorkbooks,
+	readSavedZaiApiKey,
+	renderPrompt,
+	saveZaiApiKey,
+	settings,
+	sortWorkbooks,
+	zaiApiKeySource
+} from './config';
 import type { Workbook } from '$lib/types';
 
 describe('실제 user/config/workbooks.json', () => {
@@ -103,5 +113,46 @@ describe('renderPrompt', () => {
 	it('이름이 설정되지 않았으면 자연스럽게 기본형으로 치환한다', () => {
 		const tmpl = '학생{{STUDENT_PAREN}}에게 건네는 인사. {{STUDENT_POSSESSIVE}}생각 습관. {{STUDENT_TOPIC}}기억할 점.';
 		expect(renderPrompt(tmpl, '')).toBe('학생에게 건네는 인사. 생각 습관. 기억할 점.');
+	});
+});
+
+describe('Z.AI API 키 저장', () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), 'ymath-key-'));
+		process.env.CONFIG_DIR = dir;
+		delete process.env.ZAI_API_KEY;
+	});
+	afterEach(() => {
+		delete process.env.CONFIG_DIR;
+		delete process.env.ZAI_API_KEY;
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	it('아무것도 없으면 키가 없는 상태(none)이고 값도 비어 있다', () => {
+		expect(zaiApiKeySource()).toBe('none');
+		expect(readSavedZaiApiKey()).toBe('');
+		expect(settings().zaiApiKey).toBe('');
+	});
+
+	it('저장하면 파일로 남고 settings 가 그 키를 쓴다', () => {
+		saveZaiApiKey('  test-key-123  ');
+		expect(readSavedZaiApiKey()).toBe('test-key-123');
+		expect(zaiApiKeySource()).toBe('saved');
+		expect(settings().zaiApiKey).toBe('test-key-123');
+	});
+
+	it('환경변수가 저장한 키보다 우선한다', () => {
+		saveZaiApiKey('saved-key');
+		process.env.ZAI_API_KEY = 'env-key';
+		expect(zaiApiKeySource()).toBe('env');
+		expect(settings().zaiApiKey).toBe('env-key');
+	});
+
+	it('지우면 키가 없는 상태(none)로 돌아간다', () => {
+		saveZaiApiKey('saved-key');
+		deleteSavedZaiApiKey();
+		expect(readSavedZaiApiKey()).toBe('');
+		expect(zaiApiKeySource()).toBe('none');
 	});
 });

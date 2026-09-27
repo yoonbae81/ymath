@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
- * 테스트용 가짜 claude/codex 실행 파일을 만든다.
+ * 테스트용 가짜 codex/agy 실행 파일을 만든다.
  * 넘겨받은 인자·stdin 을 로그 파일(JSON)에 남기고, 동작은 환경변수로 정한다:
  *   FAKE_LOG   로그 파일 경로
  *   FAKE_OUT   돌려줄 JSON 파일 경로
  *   FAKE_MODE  ok(기본) | fenced(코드펜스로 감쌈, codex) | error(오류 + 종료 코드 1) | nooutput(성공하지만 결과 없음)
  *              | response(agy: structured_output 없이 response 본문에만 JSON, 도구 진행 표시 포함) | denied(agy: 도구 권한 거부로 빈 응답)
  */
-export function makeFakeCli(kind: 'claude' | 'codex' | 'agy'): string {
+export function makeFakeCli(kind: 'codex' | 'agy'): string {
 	const dir = mkdtempSync(join(tmpdir(), `ymath-fake-${kind}-`));
 	const path = join(dir, kind);
 	writeFileSync(
@@ -49,10 +49,6 @@ process.stdin.on('end', () => {
     } else {
       console.log(JSON.stringify({ status: 'SUCCESS', response: '본문', structured_output: JSON.parse(out) }));
     }
-    return;
-  }
-  if (${JSON.stringify(kind)} === 'claude') {
-    console.log(JSON.stringify({ is_error: false, structured_output: JSON.parse(out), result: 'x' }));
     return;
   }
   if (mode === 'nooutput') return;

@@ -2,11 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Ajv from 'ajv';
-import type { Analysis, ItemRecord, Provider } from '$lib/types';
+import { PROVIDERS, type Analysis, type ItemRecord, type Provider } from '$lib/types';
 import { promptsDir, renderPrompt, settings } from './config';
 import { checkGuardrail } from './guardrail';
 import { IMAGE_FILE } from './image';
-import { parseClaudeOutput, runStructured } from './llm';
+import { runStructured } from './llm';
 import { knownPatternIds } from './store';
 import {
 	buildAnalysisSchema,
@@ -15,9 +15,6 @@ import {
 	renderTaxonomy,
 	type Taxonomy
 } from './taxonomy';
-
-// 테스트와 기존 호출부가 analyze 에서 가져오던 이름을 유지한다
-export { parseClaudeOutput };
 
 export interface AnalyzeContext {
 	record: ItemRecord;
@@ -54,7 +51,7 @@ export function buildPrompt(p: {
 	imagePath: string;
 	ocrText: string;
 	hint?: string;
-	/** 사진을 전달하는 방식이 다르다: claude 는 경로를 Read 로 열고, codex 는 첨부로 받는다 */
+	/** 사진을 전달하는 방식이 다르다: codex 는 첨부로 받고, agy 는 경로를 view_file 로 연다 */
 	provider?: Provider;
 }): string {
 	const patterns = p.patterns.length
@@ -79,9 +76,7 @@ export function buildPrompt(p: {
 			: p.provider === 'agy'
 				? // agy 는 헤드리스에서 셸 명령이 자동 거부되는데, 사진을 열기 전에 pwd/ls 부터 하려는 습관이 있어 도구를 못 박아 준다
 					`- 사진 파일: ${p.imagePath}  ← 셸 명령(run_command)은 절대 쓰지 말고 view_file 도구로 이 파일을 직접 열어 보세요`
-				: p.provider === 'zai'
-					? '- 문제 정보: 제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요.'
-					: `- 사진 파일: ${p.imagePath}  ← Read 도구로 반드시 직접 열어 보세요`,
+				: '- 문제 정보: 제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요.',
 		'',
 		'## OCR 텍스트 (참고용, 오류 가능)',
 		ocr,
@@ -102,10 +97,16 @@ export function validateAnalysis(schema: object, value: unknown): asserts value 
 	}
 }
 
-/** 이 항목을 분석할 LLM. 재분석 때 지정했으면 그것을, 아니면 서버 기본값(ANALYZE_PROVIDER)을 쓴다. */
-export const providerFor = (record: ItemRecord): Provider => record.requested_provider ?? settings().provider;
+/**
+ * 이 항목을 분석할 LLM. 재분석 때 지정했으면 그것을, 아니면 서버 기본값(ANALYZE_PROVIDER)을 쓴다.
+ * 목록에서 삭제된 LLM(claude)이 기록돼 있으면 기본값으로 되돌린다 — 옛 기록도 다시 분석할 수 있게.
+ */
+export const providerFor = (record: ItemRecord): Provider =>
+	record.requested_provider && (PROVIDERS as readonly string[]).includes(record.requested_provider)
+		? record.requested_provider
+		: settings().provider;
 
-/** 실제 분석기: 선택된 LLM(claude/codex)을 헤드리스로 호출 */
+/** 실제 분석기: 선택된 LLM(zai/codex/agy)을 호출해 구조화된 결과를 받는다 */
 export const analyzeItem: Analyzer = async ({ record, dir, ocrText, hint }) => {
 	const provider = providerFor(record);
 	const guideline = renderPrompt(readFileSync(join(promptsDir(), 'analyze.md'), 'utf8'));

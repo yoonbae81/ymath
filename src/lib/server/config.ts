@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { PROVIDERS, type Provider, type Workbook } from '$lib/types';
 
@@ -11,16 +11,50 @@ export const dataDir = () => resolve(process.env.DATA_DIR ?? join(userDir(), 'da
 export const promptsDir = () => resolve(process.env.PROMPTS_DIR ?? join(userDir(), 'prompts'));
 export const configDir = () => resolve(process.env.CONFIG_DIR ?? join(userDir(), 'config'));
 
+const zaiApiKeyFile = () => join(configDir(), 'zai-api-key');
+
+/** 설정 화면에서 저장한 API 키. 파일이 없거나 비어 있으면 빈 문자열 */
+export function readSavedZaiApiKey(): string {
+	try {
+		return readFileSync(zaiApiKeyFile(), 'utf8').trim();
+	} catch {
+		return '';
+	}
+}
+
+/** API 키를 user/config/zai-api-key 에 저장한다(0600, 커밋되지 않는다) */
+export function saveZaiApiKey(key: string): void {
+	mkdirSync(configDir(), { recursive: true });
+	writeFileSync(zaiApiKeyFile(), `${key.trim()}\n`, { mode: 0o600 });
+}
+
+/** 저장한 키를 지운다 */
+export function deleteSavedZaiApiKey(): void {
+	rmSync(zaiApiKeyFile(), { force: true });
+}
+
+export type ZaiKeySource = 'env' | 'saved' | 'none';
+
+/** 지금 쓰는 API 키가 어디서 온 것인지. 우선순위는 환경변수 > 저장한 키이고, 어디에도 없으면 none(분석 실패) */
+export function zaiApiKeySource(): ZaiKeySource {
+	if (process.env.ZAI_API_KEY?.trim()) return 'env';
+	if (readSavedZaiApiKey()) return 'saved';
+	return 'none';
+}
+
 export const settings = () => ({
 	/** 분석에 쓰는 LLM 기본값. 재분석 때 항목별로 바꿀 수 있다 */
 	provider: (PROVIDERS as readonly string[]).includes(process.env.ANALYZE_PROVIDER ?? '')
 		? (process.env.ANALYZE_PROVIDER as Provider)
 		: ('zai' as Provider),
-	zaiApiKey: process.env.ZAI_API_KEY ?? '48383d54493740bfb16a6a87b4547240.j4vooPFkXEVEkYtl',
+	/** 키가 어디에도 없으면 빈 문자열이고, z.ai 호출 전에 명확한 오류로 실패한다 */
+	zaiApiKey: process.env.ZAI_API_KEY?.trim() || readSavedZaiApiKey(),
 	zaiBaseUrl: process.env.ZAI_BASE_URL ?? 'https://api.z.ai/api/coding/paas/v4',
 	zaiModel: process.env.ANALYZE_MODEL ?? process.env.ZAI_MODEL ?? 'glm-5.3',
-	claudeBin: process.env.CLAUDE_BIN ?? 'claude',
-	claudeModel: process.env.ANALYZE_MODEL ?? 'sonnet',
+	/** 집 내부망 oLMX 서버(OpenAI 호환). 키는 서버가 요구하므로 OLMX_API_KEY 로 넣는다 */
+	olmxBaseUrl: process.env.OLMX_BASE_URL ?? 'http://192.168.1.9:9000/v1',
+	olmxModel: process.env.OLMX_MODEL ?? 'Qwen3.8 27B',
+	olmxApiKey: process.env.OLMX_API_KEY?.trim() ?? '',
 	codexBin: process.env.CODEX_BIN ?? 'codex',
 	// codex 설정 파일의 기본 모델은 계정에 따라 지원되지 않을 수 있고 이미지 입력도 필요하므로 명시한다
 	codexModel: process.env.CODEX_MODEL ?? 'gpt-5.5',

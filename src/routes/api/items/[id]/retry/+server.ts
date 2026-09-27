@@ -5,7 +5,7 @@ import { isValidId, readRecord, updateRecord } from '$lib/server/store';
 import { PROVIDERS, type Provider } from '$lib/types';
 import type { RequestHandler } from './$types';
 
-/** 재분석. `?provider=claude|codex` 로 이번에 쓸 LLM 을 고를 수 있다. 기존 분석 결과는 새 결과로 바뀔 때까지 남겨 둔다. */
+/** 재분석. `?provider=zai|codex|agy` 로 이번에 쓸 LLM 을 고를 수 있다. 기존 분석 결과는 새 결과로 바뀔 때까지 남겨 둔다. */
 export const POST: RequestHandler = ({ params, request, url, getClientAddress }) => {
 	requireAjax(request);
 	// OWASP ASVS V2.4.1: 상태 변경 API 속도 제한(IP 당)

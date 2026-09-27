@@ -11,34 +11,13 @@ export interface StructuredCall {
 	schema: object;
 	/** 작업 디렉터리(임시 파일도 여기에 만들고 지운다) */
 	dir: string;
-	/** 분석할 사진. claude 는 프롬프트에 적힌 경로를 Read 로 열고, codex 는 -i 로 첨부한다 */
+	/** 분석할 사진. codex 는 -i 로 첨부하고, agy 는 프롬프트에 적힌 경로를 view_file 로 연다 */
 	imagePath: string;
 }
 
 export interface LlmOutput {
 	output: unknown;
 	model: string;
-}
-
-/** `claude -p --output-format json` 의 표준출력에서 구조화된 결과만 꺼낸다. */
-export function parseClaudeOutput(stdout: string): unknown {
-	let env: any;
-	try {
-		env = JSON.parse(stdout);
-	} catch {
-		throw new Error(`claude 출력이 JSON 이 아님: ${stdout.slice(0, 200)}`);
-	}
-	if (env.is_error) throw new Error(`claude 오류: ${String(env.result ?? env.subtype).slice(0, 300)}`);
-	if (env.structured_output && typeof env.structured_output === 'object') return env.structured_output;
-	// 구조화 필드가 없으면 result 본문의 JSON 을 시도한다
-	if (typeof env.result === 'string') {
-		try {
-			return JSON.parse(env.result);
-		} catch {
-			/* fallthrough */
-		}
-	}
-	throw new Error('claude 결과에 structured_output 이 없음');
 }
 
 /**
@@ -125,7 +104,8 @@ export function isQuotaOrRateLimitError(err: unknown): boolean {
 	);
 }
 
-export function parseZaiOutput(text: string): unknown {
+/** 코드펜스로 감싸진 경우도 허용해 JSON 본문만 꺼낸다 */
+export function parseJsonBody(label: string, text: string): unknown {
 	const body = text
 		.trim()
 		.replace(/^```(?:json)?\s*/i, '')
@@ -133,111 +113,127 @@ export function parseZaiOutput(text: string): unknown {
 	try {
 		return JSON.parse(body);
 	} catch {
-		throw new Error(`zai 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
+		throw new Error(`${label} 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
 	}
 }
 
-async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
-	const s = settings();
-	const endpoint = `${s.zaiBaseUrl.replace(/\/+$/, '')}/chat/completions`;
+const missingKeyError = (provider: string, how: string) => new Error(`${provider} API 키가 설정되지 않았습니다. ${how}`);
+
+const MATH_COACH_SYSTEM =
+	'당신은 학생의 수학 오답을 전문적으로 분석하고 코칭하는 수학 교육 전문가입니다. 주어진 JSON Schema를 엄격히 준수하여 순수 JSON 객체 하나만 출력하십시오. 마크다운 코드 블록이나 다른 텍스트는 일체 출력하지 마세요.';
+
+const promptWithSchema = (prompt: string, schema: object) =>
+	`${prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
+
+/**
+ * OpenAI 호환 chat/completions 한 번 호출하고 응답 본문을 반환한다.
+ * z.ai 원격과 집 내부망 oLMX 가 같은 형식을 쓰므로 한 곳에서 429·할당량·빈 응답을 처리한다.
+ */
+async function chatCompletion(o: {
+	label: string;
+	baseUrl: string;
+	apiKey: string;
+	model: string;
+	messages: { role: 'system' | 'user'; content: string }[];
+	/** response_format: json_object 를 보낸다. 미지원 서버를 위해 끌 수 있다 */
+	jsonMode: boolean;
+	extraBody?: Record<string, unknown>;
+	timeoutMs: number;
+}): Promise<string> {
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), s.analyzeTimeoutMs);
-
-	const promptWithSchema = `${c.prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(c.schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
-
+	const timer = setTimeout(() => controller.abort(), o.timeoutMs);
 	try {
-		const res = await fetch(endpoint, {
+		const res = await fetch(`${o.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
 			method: 'POST',
 			headers: {
-				Authorization: `Bearer ${s.zaiApiKey}`,
+				...(o.apiKey ? { Authorization: `Bearer ${o.apiKey}` } : {}),
 				'Content-Type': 'application/json'
 			},
 			body: JSON.stringify({
-				model: s.zaiModel,
-				messages: [
-					{
-						role: 'system',
-						content:
-							'당신은 학생의 수학 오답을 전문적으로 분석하고 코칭하는 수학 교육 전문가입니다. 주어진 JSON Schema를 엄격히 준수하여 순수 JSON 객체 하나만 출력하십시오. 마크다운 코드 블록이나 다른 텍스트는 일체 출력하지 마세요.'
-					},
-					{
-						role: 'user',
-						content: promptWithSchema
-					}
-				],
-				response_format: { type: 'json_object' },
-				thinking: { type: 'disabled' },
+				model: o.model,
+				messages: o.messages,
+				...(o.jsonMode ? { response_format: { type: 'json_object' as const } } : {}),
 				max_tokens: 4096,
-				temperature: 0.2
+				temperature: 0.2,
+				...o.extraBody
 			}),
 			signal: controller.signal
 		});
 
-		clearTimeout(timer);
-
 		if (res.status === 429) {
 			const errText = await res.text().catch(() => '');
-			throw new QuotaExceededError(`z.ai 요청 한도 초과(HTTP 429): ${errText.slice(0, 200)}`, 429);
+			throw new QuotaExceededError(`${o.label} 요청 한도 초과(HTTP 429): ${errText.slice(0, 200)}`, 429);
 		}
 
 		if (!res.ok) {
 			const errText = await res.text().catch(() => '');
 			if (isQuotaOrRateLimitError(errText)) {
-				throw new QuotaExceededError(`z.ai 할당량 소진 또는 제한(${res.status}): ${errText.slice(0, 200)}`, res.status);
+				throw new QuotaExceededError(`${o.label} 할당량 소진 또는 제한(${res.status}): ${errText.slice(0, 200)}`, res.status);
 			}
-			throw new Error(`z.ai API 오류(${res.status}): ${errText.slice(0, 300)}`);
+			throw new Error(`${o.label} API 오류(${res.status}): ${errText.slice(0, 300)}`);
 		}
 
 		const data = (await res.json()) as any;
 		if (data.error) {
 			const msg = typeof data.error === 'string' ? data.error : data.error.message || JSON.stringify(data.error);
 			if (isQuotaOrRateLimitError(msg)) {
-				throw new QuotaExceededError(`z.ai 할당량 소진: ${msg.slice(0, 200)}`);
+				throw new QuotaExceededError(`${o.label} 할당량 소진: ${msg.slice(0, 200)}`);
 			}
-			throw new Error(`z.ai 응답 오류: ${msg.slice(0, 300)}`);
+			throw new Error(`${o.label} 응답 오류: ${msg.slice(0, 300)}`);
 		}
 
 		const choice = data.choices?.[0];
 		const content = choice?.message?.content ?? '';
 		if (!content.trim()) {
-			throw new Error(`z.ai 응답 내용이 비었음 (finish_reason: ${choice?.finish_reason})`);
+			throw new Error(`${o.label} 응답 내용이 비었음 (finish_reason: ${choice?.finish_reason})`);
 		}
-
-		return { output: parseZaiOutput(content), model: s.zaiModel };
+		return content;
 	} catch (e: any) {
-		clearTimeout(timer);
 		if (e.name === 'AbortError') {
-			throw new Error(`분석 시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
+			throw new Error(`분석 시간 초과(${Math.round(o.timeoutMs / 1000)}초)`);
 		}
 		throw e;
+	} finally {
+		clearTimeout(timer);
 	}
 }
 
-async function structuredWithClaude(c: StructuredCall): Promise<LlmOutput> {
+async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
-	const r = await exec(
-		s.claudeBin,
-		[
-			'-p',
-			'--model',
-			s.claudeModel,
-			'--output-format',
-			'json',
-			'--json-schema',
-			JSON.stringify(c.schema),
-			'--tools',
-			'Read',
-			'--allowedTools',
-			'Read',
-			'--add-dir',
-			c.dir,
-			'--no-session-persistence'
+	if (!s.zaiApiKey) throw missingKeyError('Z.AI', '/status 화면의 ⚙️ 분석 설정에서 저장하거나 ZAI_API_KEY 환경변수를 설정하세요');
+	const content = await chatCompletion({
+		label: 'z.ai',
+		baseUrl: s.zaiBaseUrl,
+		apiKey: s.zaiApiKey,
+		model: s.zaiModel,
+		messages: [
+			{ role: 'system', content: MATH_COACH_SYSTEM },
+			{ role: 'user', content: promptWithSchema(c.prompt, c.schema) }
 		],
-		{ cwd: c.dir, input: c.prompt, timeoutMs: s.analyzeTimeoutMs }
-	);
-	if (r.timedOut) throw new Error(`분석 시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-	if (r.code !== 0 && !r.stdout.trim()) throw new Error(`claude 종료 코드 ${r.code}: ${r.stderr.trim().slice(-300)}`);
-	return { output: parseClaudeOutput(r.stdout), model: s.claudeModel };
+		jsonMode: true,
+		extraBody: { thinking: { type: 'disabled' } },
+		timeoutMs: s.analyzeTimeoutMs
+	});
+	return { output: parseJsonBody('zai', content), model: s.zaiModel };
+}
+
+/** 집 내부망 oLMX(OpenAI 호환)로 분석한다. 사진 없이 OCR 텍스트·문제집 정보만으로 답한다(z.ai 와 동일) */
+async function structuredWithOlmx(c: StructuredCall): Promise<LlmOutput> {
+	const s = settings();
+	if (!s.olmxApiKey) throw missingKeyError('oLMX', 'OLMX_API_KEY 환경변수를 설정하세요');
+	const content = await chatCompletion({
+		label: 'oLMX',
+		baseUrl: s.olmxBaseUrl,
+		apiKey: s.olmxApiKey,
+		model: s.olmxModel,
+		messages: [
+			{ role: 'system', content: MATH_COACH_SYSTEM },
+			{ role: 'user', content: promptWithSchema(c.prompt, c.schema) }
+		],
+		jsonMode: true,
+		timeoutMs: s.analyzeTimeoutMs
+	});
+	return { output: parseJsonBody('oLMX', content), model: s.olmxModel };
 }
 
 async function structuredWithCodex(c: StructuredCall): Promise<LlmOutput> {
@@ -337,59 +333,40 @@ export function runStructured(provider: Provider, call: StructuredCall): Promise
 	if (provider === 'zai') return structuredWithZai(call);
 	if (provider === 'codex') return structuredWithCodex(call);
 	if (provider === 'agy') return structuredWithAgy(call);
-	return structuredWithClaude(call);
+	if (provider === 'olmx') return structuredWithOlmx(call);
+	// 옛 기록의 requested_provider 같은 값이 타입 검사를 우회해 올 수 있다
+	return Promise.reject(new Error(`사용할 수 없는 LLM 입니다: ${provider}`));
 }
 
 /** 텍스트만 주고받는 호출(사진·스키마 없음). 보고서 작성처럼 프롬프트 → 본문만 필요한 곳에서 쓴다. */
 export async function runText(provider: Provider, prompt: string): Promise<{ text: string; model: string }> {
 	const s = settings();
 	if (provider === 'zai') {
-		const endpoint = `${s.zaiBaseUrl.replace(/\/+$/, '')}/chat/completions`;
-		const controller = new AbortController();
-		const timer = setTimeout(() => controller.abort(), s.analyzeTimeoutMs);
-		try {
-			const res = await fetch(endpoint, {
-				method: 'POST',
-				headers: {
-					Authorization: `Bearer ${s.zaiApiKey}`,
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify({
-					model: s.zaiModel,
-					messages: [{ role: 'user', content: prompt }],
-					thinking: { type: 'disabled' },
-					max_tokens: 4096,
-					temperature: 0.2
-				}),
-				signal: controller.signal
-			});
-			clearTimeout(timer);
-			if (res.status === 429) {
-				throw new QuotaExceededError('z.ai 요청 한도 초과(429)', 429);
-			}
-			if (!res.ok) {
-				const errText = await res.text().catch(() => '');
-				if (isQuotaOrRateLimitError(errText)) throw new QuotaExceededError(`z.ai 할당량 소진: ${errText.slice(0, 200)}`);
-				throw new Error(`z.ai 오류(${res.status}): ${errText.slice(0, 300)}`);
-			}
-			const data = (await res.json()) as any;
-			const text = data.choices?.[0]?.message?.content?.trim() ?? '';
-			if (!text) throw new Error('z.ai 응답이 비었음');
-			return { text, model: s.zaiModel };
-		} catch (e: any) {
-			clearTimeout(timer);
-			if (e.name === 'AbortError') throw new Error(`시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-			throw e;
-		}
-	}
-	if (provider === 'claude') {
-		const r = await exec(s.claudeBin, ['-p', '--model', s.claudeModel, '--no-session-persistence'], {
-			input: prompt,
+		if (!s.zaiApiKey) throw missingKeyError('Z.AI', '/status 화면의 ⚙️ 분석 설정에서 저장하거나 ZAI_API_KEY 환경변수를 설정하세요');
+		const text = await chatCompletion({
+			label: 'z.ai',
+			baseUrl: s.zaiBaseUrl,
+			apiKey: s.zaiApiKey,
+			model: s.zaiModel,
+			messages: [{ role: 'user', content: prompt }],
+			jsonMode: false,
+			extraBody: { thinking: { type: 'disabled' } },
 			timeoutMs: s.analyzeTimeoutMs
 		});
-		if (r.timedOut) throw new Error(`시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-		if (r.code !== 0) throw new Error(`claude 실패(code ${r.code}): ${r.stderr.trim().slice(-300)}`);
-		return { text: r.stdout.trim(), model: s.claudeModel };
+		return { text: text.trim(), model: s.zaiModel };
+	}
+	if (provider === 'olmx') {
+		if (!s.olmxApiKey) throw missingKeyError('oLMX', 'OLMX_API_KEY 환경변수를 설정하세요');
+		const text = await chatCompletion({
+			label: 'oLMX',
+			baseUrl: s.olmxBaseUrl,
+			apiKey: s.olmxApiKey,
+			model: s.olmxModel,
+			messages: [{ role: 'user', content: prompt }],
+			jsonMode: false,
+			timeoutMs: s.analyzeTimeoutMs
+		});
+		return { text: text.trim(), model: s.olmxModel };
 	}
 	if (provider === 'agy') {
 		// 도구를 쓰려다 헤드리스 권한 거부로 응답이 비는 것을 막기 위해 본문만 답하게 한다

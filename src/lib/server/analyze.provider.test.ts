@@ -20,12 +20,14 @@ const record = (requested?: Provider) =>
 beforeEach(() => {
 	work = mkdtempSync(join(tmpdir(), 'ymath-prov-'));
 	process.env.DATA_DIR = join(work, 'data'); // knownPatternIds 가 읽는다(비어 있음)
+	// z.ai·oLMX 경로는 키가 없으면 호출 전에 실패하므로 기본 케이스에선 키를 준다
+	process.env.ZAI_API_KEY = 'test-key';
+	process.env.OLMX_API_KEY = 'test-key';
 	writeFileSync(join(work, 'image.jpg'), 'img');
 	writeFileSync(join(work, 'out.json'), JSON.stringify(validAnalysis()));
 	process.env.FAKE_LOG = join(work, 'log.json');
 	process.env.FAKE_OUT = join(work, 'out.json');
 	process.env.CODEX_BIN = makeFakeCli('codex');
-	process.env.CLAUDE_BIN = makeFakeCli('claude');
 	process.env.AGY_BIN = makeFakeCli('agy');
 	vi.stubGlobal(
 		'fetch',
@@ -47,25 +49,17 @@ beforeEach(() => {
 });
 afterEach(() => {
 	vi.restoreAllMocks();
-	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CLAUDE_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER']) delete process.env[k];
+	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER', 'ZAI_API_KEY', 'OLMX_API_KEY', 'CONFIG_DIR']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
 
 const run = (r: ItemRecord) => analyzeItem({ record: r, dir: work, ocrText: '$x$' });
 
 describe('분석 LLM 선택', () => {
-	it('기본값은 zai', async () => {
+	it('기본값은 zai(glm-5.3)', async () => {
 		expect(providerFor(record())).toBe('zai');
 		const res = await run(record());
 		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3' });
-	});
-
-	it('ANALYZE_PROVIDER=claude 로 서버 기본값을 바꾼다', async () => {
-		process.env.ANALYZE_PROVIDER = 'claude';
-		expect(providerFor(record())).toBe('claude');
-		const res = await run(record());
-		expect(res).toMatchObject({ provider: 'claude', model: 'sonnet' });
-		expect(log().stdin).toContain('Read 도구로 반드시 직접 열어');
 	});
 
 	it('ANALYZE_PROVIDER=codex 로 서버 기본값을 바꾼다', async () => {
@@ -76,10 +70,10 @@ describe('분석 LLM 선택', () => {
 
 	it('항목의 requested_provider 가 서버 기본값보다 우선한다', async () => {
 		process.env.ANALYZE_PROVIDER = 'codex';
-		expect(providerFor(record('claude'))).toBe('claude');
-		const res = await run(record('claude'));
-		expect(res.provider).toBe('claude');
-		process.env.ANALYZE_PROVIDER = 'claude';
+		expect(providerFor(record('agy'))).toBe('agy');
+		const res = await run(record('agy'));
+		expect(res.provider).toBe('agy');
+		process.env.ANALYZE_PROVIDER = 'agy';
 		expect((await run(record('codex'))).provider).toBe('codex');
 	});
 
@@ -113,11 +107,16 @@ describe('분석 LLM 선택', () => {
 		expect(Buffer.byteLength(log().promptArg, 'utf8')).toBeLessThan(AGY_MAX_PROMPT_BYTES * 0.6);
 	});
 
-	it('ANALYZE_PROVIDER=agy 로 기본값을 바꾸고, 알 수 없는 값은 zai 로 둔다', async () => {
+	it('ANALYZE_PROVIDER=agy 로 기본값을 바꾸고, 알 수 없는 값과 삭제된 claude 는 zai 로 둔다', async () => {
 		process.env.ANALYZE_PROVIDER = 'agy';
 		expect(providerFor(record())).toBe('agy');
 		process.env.ANALYZE_PROVIDER = 'gemini';
 		expect(providerFor(record())).toBe('zai');
+		process.env.ANALYZE_PROVIDER = 'claude';
+		expect(providerFor(record())).toBe('zai');
+		// 옛 기록에 claude 가 지정돼 있어도 기본값으로 되돌린다
+		process.env.ANALYZE_PROVIDER = 'codex';
+		expect(providerFor(record('claude' as Provider))).toBe('codex');
 	});
 
 	it('zai 로 분석하면 z.ai 엔드포인트를 호출하고 OCR 안내가 프롬프트에 들어간다', async () => {
@@ -145,6 +144,50 @@ describe('분석 LLM 선택', () => {
 		expect(res).toMatchObject({ provider: 'zai', model: 'glm-5.3', taxonomyIssues: [], guardrailWarnings: [] });
 		expect(capturedBody.model).toBe('glm-5.3');
 		expect(capturedBody.messages[1].content).toContain('제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요');
+	});
+
+	it('API 키가 없으면 z.ai 를 호출하지 않고 사유를 알린다', async () => {
+		delete process.env.ZAI_API_KEY;
+		process.env.CONFIG_DIR = join(work, 'cfg'); // 저장된 키도 없는 상태
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(run(record('zai'))).rejects.toThrow(/API 키가 설정되지 않았습니다/);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('olmx 로 분석하면 oLMX 엔드포인트를 호출하고 모델·스키마 지시가 담긴다', async () => {
+		let capturedUrl = '';
+		let capturedBody: any;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, opts: any) => {
+				capturedUrl = url;
+				capturedBody = JSON.parse(opts.body);
+				expect(opts.headers.Authorization).toBe('Bearer test-key');
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						choices: [{ message: { content: JSON.stringify(validAnalysis()) } }]
+					})
+				} as any;
+			})
+		);
+		const res = await run(record('olmx'));
+		expect(res).toMatchObject({ provider: 'olmx', model: 'Qwen3.8 27B', taxonomyIssues: [], guardrailWarnings: [] });
+		expect(capturedUrl).toBe('http://192.168.1.9:9000/v1/chat/completions');
+		expect(capturedBody.model).toBe('Qwen3.8 27B');
+		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
+		expect(capturedBody.messages[1].content).toContain('준수해야 할 JSON Schema');
+		expect(capturedBody.messages[1].content).toContain('제공된 OCR 텍스트와 문제집 정보를 바탕으로 분석하세요');
+	});
+
+	it('OLMX_API_KEY 가 없으면 oLMX 를 호출하지 않고 사유를 알린다', async () => {
+		delete process.env.OLMX_API_KEY;
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(run(record('olmx'))).rejects.toThrow(/oLMX API 키가 설정되지 않았습니다/);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('agy 결과에도 스키마 검증과 정답 노출 가드레일이 적용된다', async () => {

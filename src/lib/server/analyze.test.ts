@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPrompt, parseClaudeOutput, promptVersion, validateAnalysis } from './analyze';
+import { buildPrompt, promptVersion, validateAnalysis } from './analyze';
 import { buildAnalysisSchema, loadTaxonomy } from './taxonomy';
 import { validAnalysis } from './analysis.fixture';
 import type { ItemRecord } from '$lib/types';
@@ -7,22 +7,6 @@ import type { ItemRecord } from '$lib/types';
 const record = { workbook: { id: 'w', name: '개념원리 공통수학1', publisher: '개념원리', grade: '고1', semester: 1 } } as ItemRecord;
 
 const valid = validAnalysis;
-
-describe('parseClaudeOutput', () => {
-	it('structured_output 을 우선 사용한다', () => {
-		expect(parseClaudeOutput(JSON.stringify({ structured_output: { a: 1 }, result: 'x' }))).toEqual({ a: 1 });
-	});
-	it('structured_output 이 없으면 result 의 JSON 을 쓴다', () => {
-		expect(parseClaudeOutput(JSON.stringify({ result: '{"a":2}' }))).toEqual({ a: 2 });
-	});
-	it('is_error 면 예외', () => {
-		expect(() => parseClaudeOutput(JSON.stringify({ is_error: true, result: 'boom' }))).toThrow(/boom/);
-	});
-	it('JSON 이 아니거나 결과가 없으면 예외', () => {
-		expect(() => parseClaudeOutput('garbage')).toThrow();
-		expect(() => parseClaudeOutput(JSON.stringify({ result: '그냥 말' }))).toThrow();
-	});
-});
 
 describe('validateAnalysis (실제 curriculum 으로 만든 스키마)', () => {
 	const schema = buildAnalysisSchema(loadTaxonomy());
@@ -92,7 +76,7 @@ describe('buildPrompt', () => {
 	const taxonomy = loadTaxonomy();
 	const base = { guideline: '# 지침\n본문', taxonomy, record, imagePath: '/x/image.jpg' };
 
-	it('지침, 분류 체계, 패턴, 사진 경로, OCR 을 모두 담는다', () => {
+	it('지침, 분류 체계, 패턴, OCR 을 모두 담는다', () => {
 		const p = buildPrompt({
 			...base,
 			patterns: [{ id: 'sign-error-expansion', count: 3, example: '부호 착각' }],
@@ -103,8 +87,16 @@ describe('buildPrompt', () => {
 		expect(p).toContain('GEO-CIRCLE-EQ');
 		expect(p).toContain('sign-error-expansion (3회): 부호 착각');
 		expect(p).toContain('개념원리 공통수학1');
-		expect(p).toContain('/x/image.jpg');
 		expect(p).toContain('$x^2$');
+	});
+
+	it('사진 안내는 provider 별로 다르다: agy 는 절대 경로, zai 는 OCR 기반 안내', () => {
+		const agy = buildPrompt({ ...base, patterns: [], ocrText: 'x', provider: 'agy' });
+		expect(agy).toContain('/x/image.jpg');
+		expect(agy).toContain('view_file');
+		const zai = buildPrompt({ ...base, patterns: [], ocrText: 'x', provider: 'zai' });
+		expect(zai).toContain('제공된 OCR 텍스트와 문제집 정보');
+		expect(zai).not.toContain('/x/image.jpg');
 	});
 
 	it('재시도 힌트가 있을 때만 직전 문제점 섹션이 들어간다', () => {

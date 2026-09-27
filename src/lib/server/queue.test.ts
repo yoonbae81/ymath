@@ -22,7 +22,7 @@ afterEach(() => {
 
 const okDeps = (over: Partial<QueueDeps> = {}): QueueDeps => ({
 	ocr: async () => '$x^2$',
-	analyze: async () => ({ analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] }),
+	analyze: async () => ({ analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] }),
 	maxAttempts: 2,
 	...over
 });
@@ -40,7 +40,7 @@ describe('JobQueue', () => {
 				analyze: async ({ ocrText }) => {
 					seen.push(readRecord(item.id)!.status);
 					expect(ocrText).toBe('$x^2$');
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -51,7 +51,7 @@ describe('JobQueue', () => {
 		const r = readRecord(item.id)!;
 		expect(r).toMatchObject({ status: 'done', error: null, attempts: 1 });
 		expect(r.analysis).toEqual(fakeAnalysis);
-		expect(r.meta).toMatchObject({ provider: 'claude', model: 'sonnet', prompt_version: 'abc12345' });
+		expect(r.meta).toMatchObject({ provider: 'zai', model: 'glm-5.3', prompt_version: 'abc12345' });
 		expect(r.flags).toEqual({ ocr_missing: false, taxonomy_mismatch: [], guardrail: [] });
 		expect(readFileSync(join(itemDir(item.id), 'ocr.md'), 'utf8')).toBe('$x^2$');
 	});
@@ -66,7 +66,7 @@ describe('JobQueue', () => {
 				},
 				analyze: async ({ ocrText }) => {
 					gotOcr = ocrText;
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -85,7 +85,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async () => {
 					if (++calls === 1) throw new Error('일시 오류');
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -103,7 +103,7 @@ describe('JobQueue', () => {
 				analyze: async ({ hint }) => {
 					hints.push(hint);
 					if (hints.length === 1) throw new Error('정답 노출 가드레일 위반: 넛지 Q1에 등식이 있음');
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: ['질문 형태가 아님'] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: ['질문 형태가 아님'] };
 				}
 			})
 		);
@@ -133,8 +133,8 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async () => ({
 					analysis: fakeAnalysis,
-					provider: 'claude',
-					model: 'sonnet',
+					provider: 'zai',
+					model: 'glm-5.3',
 					promptVersion: 'p',
 					taxonomyIssues: ["단원 'X'은 '기하' 영역인데 topic이 '대수'"],
 					guardrailWarnings: []
@@ -161,7 +161,7 @@ describe('JobQueue', () => {
 				},
 				analyze: async ({ ocrText }) => {
 					gotOcr = ocrText;
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -185,7 +185,7 @@ describe('JobQueue', () => {
 					order.push(record.id);
 					await new Promise((r) => setTimeout(r, 20));
 					active--;
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -212,7 +212,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async ({ record }) => {
 					order.push(record.id);
-					return { analysis: fakeAnalysis, provider: 'claude', model: 'sonnet', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);

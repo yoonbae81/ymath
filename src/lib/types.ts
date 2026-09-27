@@ -1,7 +1,14 @@
 /** 분석에 쓸 수 있는 LLM */
-export const PROVIDERS = ['zai', 'claude', 'codex', 'agy'] as const;
+export const PROVIDERS = ['zai', 'codex', 'agy', 'olmx'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { zai: 'GLM 5.3 (Z.AI)', claude: 'Claude', codex: 'Codex', agy: 'Agy (Gemini)' };
+export const PROVIDER_LABEL: Record<Provider, string> = { zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)', olmx: 'Qwen3.8 27B' };
+
+/** 삭제된 LLM(claude). 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
+const LEGACY_PROVIDER_LABEL: Record<string, string> = { claude: 'Claude' };
+
+/** 기록에 남은 provider 값을 화면 표시용 라벨로. 목록에서 빠진 옛 값도 깨지지 않게 그 값 자체로 보여 준다 */
+export const providerLabel = (provider: string | null | undefined): string =>
+	provider ? ((PROVIDER_LABEL as Record<string, string>)[provider] ?? LEGACY_PROVIDER_LABEL[provider] ?? provider) : '';
 
 export type Status = 'queued' | 'ocr' | 'analyzing' | 'done' | 'failed';
 
