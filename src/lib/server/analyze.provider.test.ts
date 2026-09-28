@@ -60,7 +60,7 @@ describe('분석 LLM 선택', () => {
 	it('기본값은 omlx(Qwen3.8 27B)', async () => {
 		expect(providerFor(record())).toBe('omlx');
 		const res = await run(record());
-		expect(res).toMatchObject({ provider: 'omlx', model: 'mlx-community--Qwen3.8-27B-8bit' });
+		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.8-27B-8bit' });
 	});
 
 	it('ANALYZE_PROVIDER=codex 로 서버 기본값을 바꾼다', async () => {
@@ -204,9 +204,9 @@ describe('분석 LLM 선택', () => {
 			})
 		);
 		const res = await run(record('omlx'));
-		expect(res).toMatchObject({ provider: 'omlx', model: 'mlx-community--Qwen3.8-27B-8bit', taxonomyIssues: [], guardrailWarnings: [] });
+		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.8-27B-8bit', taxonomyIssues: [], guardrailWarnings: [] });
 		expect(capturedUrl).toBe('http://192.168.1.9:9000/v1/chat/completions');
-		expect(capturedBody.model).toBe('mlx-community--Qwen3.8-27B-8bit');
+		expect(capturedBody.model).toBe('Qwen3.8-27B-8bit');
 		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
 		// Qwen3.8 은 멀티모달 — 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
 		const parts = capturedBody.messages[1].content as any[];

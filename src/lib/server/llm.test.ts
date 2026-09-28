@@ -157,9 +157,9 @@ describe('runText', () => {
 			})
 		);
 		const r = await runText('omlx', '써 줘');
-		expect(r).toEqual({ text: '보고서 본문', model: 'mlx-community--Qwen3.8-27B-8bit' });
+		expect(r).toEqual({ text: '보고서 본문', model: 'Qwen3.8-27B-8bit' });
 		expect(url).toBe('http://192.168.1.9:9000/v1/chat/completions');
-		expect(body.model).toBe('mlx-community--Qwen3.8-27B-8bit');
+		expect(body.model).toBe('Qwen3.8-27B-8bit');
 		// 본문 요청에는 JSON 모드를 쓰지 않는다
 		expect(body.response_format).toBeUndefined();
 		expect(body.messages).toEqual([{ role: 'user', content: '써 줘' }]);

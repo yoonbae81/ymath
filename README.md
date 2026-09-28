@@ -166,7 +166,7 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
 | `ZAI_API_KEY` | (없음) | Z.AI API 키. 보통은 `user/config/providers.json` 의 `zai.apiKey` 를 쓰고, 환경변수가 있으면 그쪽이 이긴다 |
 | `ZAI_BASE_URL` | `https://api.z.ai/api/coding/paas/v4` | Z.AI Coding Plan 엔드포인트. `providers.json` 의 `zai.baseUrl` 으로도 지정 가능 |
 | `OMLX_BASE_URL` | `http://192.168.1.9:9000/v1` | oMLX(내부망 OpenAI 호환 서버) 주소. `providers.json` 의 `omlx.baseUrl` 으로도 지정 가능 |
-| `OMLX_MODEL` | `mlx-community--Qwen3.8-27B-8bit` | oMLX에서 쓸 모델. `providers.json` 의 `omlx.models[0].id` 로도 지정 가능 |
+| `OMLX_MODEL` | `Qwen3.8-27B-8bit` | oMLX에서 쓸 모델. `providers.json` 의 `omlx.models[0].id` 로도 지정 가능 |
 | `OMLX_API_KEY` | (없음) | oMLX 서버의 API 키. 보통은 `providers.json` 의 `omlx.apiKey` 를 쓴다. 서버가 키를 요구하므로 어느 쪽에든 필요 |
 | `CODEX_BIN` | `codex` | codex 실행 파일 경로 |
 | `AGY_BIN` | `agy` | agy 실행 파일 경로 |

@@ -51,7 +51,7 @@ export const settings = () => {
 		zaiModel: process.env.ANALYZE_MODEL || process.env.ZAI_MODEL || zai?.models?.[0]?.id || 'glm-5.3-flash',
 		/** 집 내부망 oMLX 서버(OpenAI 호환, Mac에서 MLX 추론). 서버가 API 키를 요구한다 */
 		omlxBaseUrl: process.env.OMLX_BASE_URL || omlx?.baseUrl || 'http://192.168.1.9:9000/v1',
-		omlxModel: process.env.OMLX_MODEL || omlx?.models?.[0]?.id || 'mlx-community--Qwen3.8-27B-8bit',
+		omlxModel: process.env.OMLX_MODEL || omlx?.models?.[0]?.id || 'Qwen3.8-27B-8bit',
 		omlxApiKey: process.env.OMLX_API_KEY?.trim() || omlx?.apiKey || '',
 		codexBin: process.env.CODEX_BIN ?? 'codex',
 	// codex 설정 파일의 기본 모델은 계정에 따라 지원되지 않을 수 있고 이미지 입력도 필요하므로 명시한다
