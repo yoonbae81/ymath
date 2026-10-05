@@ -1,4 +1,4 @@
-# 임시 운영 정비 워크플로 — 배포 호스트 작업트리 정리 + oMLX 엔드포인트 도달성 확인 (읽기·stash 만)
+# 임시 운영 정비 워크플로 - 배포 호스트 작업트리 정리 + oMLX 엔드포인트 도달성 확인 (stash 만, 읽기 외 변경 없음)
 # 끝나면 이 브랜치와 파일은 삭제한다.
 name: Lead ops - deploy host clean
 on:
@@ -33,17 +33,21 @@ jobs:
           umask 077
           printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$RUNNER_TEMP/ssh_key"
           {
-            echo "== BEFORE =="
-            cd /opt/ymath && git status --short --branch | head -12
-            if ! git diff --quiet || ! git diff --cached --quiet; then
-              git stash push -m "lead-clean-$(date +%Y%m%d%H%M%S)"
-              echo "== STASHED =="
-            else
-              echo "== TREE ALREADY CLEAN =="
-            fi
-            echo "== AFTER =="
-            git status --short | head -12
-            git log -1 --format='%h %s'
-            echo "== oMLX endpoint from deploy host =="
-            curl -sS -o /dev/null -w "https://llm.xcv.kr:9000/v1/models -> HTTP %{http_code} (%{time_total}s)\n" --max-time 15 https://llm.xcv.kr:9000/v1/models || echo "curl failed rc=$?"
+            cat <<'REMOTE'
+          set -euo pipefail
+          cd /opt/ymath
+          echo "== BEFORE =="
+          git status --short --branch | head -12
+          if ! git diff --quiet || ! git diff --cached --quiet; then
+            git stash push -m "lead-clean-$(date +%Y%m%d%H%M%S)"
+            echo "== STASHED =="
+          else
+            echo "== TREE ALREADY CLEAN =="
+          fi
+          echo "== AFTER =="
+          git status --short | head -12
+          git log -1 --format='%h %s'
+          echo "== oMLX endpoint from deploy host =="
+          curl -sS -o /dev/null -w "https://llm.xcv.kr:9000/v1/models -> HTTP %{http_code} (%{time_total}s)\n" --max-time 15 https://llm.xcv.kr:9000/v1/models || echo "curl failed rc=$?"
+          REMOTE
           } | ssh -i "$RUNNER_TEMP/ssh_key" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 y@10.0.0.2 'bash -s'
