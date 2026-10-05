@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { JobQueue, type QueueDeps } from './queue';
 import { QuotaExceededError } from './llm';
 import { createItem, itemDir, listAnalyses, readRecord, updateRecord } from './store';
-import type { Analysis, Status } from '$lib/types';
+import type { Analysis, Feedback, Status } from '$lib/types';
 
 const WB = { id: 'w', name: '쎈 중2-1', publisher: '쎈', grade: '중2', semester: 1 };
 const fakeAnalysis = { classification: { topic: '대수' } } as unknown as Analysis;
@@ -111,6 +111,38 @@ describe('JobQueue', () => {
 		await q.idle();
 		expect(hints).toEqual([undefined, '정답 노출 가드레일 위반: 넛지 Q1에 등식이 있음']);
 		expect(readRecord(item.id)!.flags.guardrail).toEqual(['질문 형태가 아님']);
+	});
+
+	it('재분석할 현재 분석에 연결된 사용자 피드백만 분석기에 넘긴다', async () => {
+		const item = createItem(WB);
+		const current: Feedback = {
+			choice: 'wrong_diagnosis',
+			comment: '오류 지점이 달라요.',
+			created_at: '2026-10-05T01:00:00.000Z',
+			analyzed_at: '2026-10-05T00:00:00.000Z',
+			prompt_version: 'oldprompt',
+			provider: 'omlx',
+			model: 'old-model'
+		};
+		updateRecord(item.id, (r) => {
+			r.meta = { provider: 'omlx', model: 'old-model', prompt_version: 'oldprompt', analyzed_at: current.analyzed_at };
+			r.feedback = [
+				{ ...current, choice: 'accurate', comment: '', analyzed_at: '2026-10-04T00:00:00.000Z' },
+				current
+			];
+		});
+		let got: Feedback | undefined;
+		const q = new JobQueue(
+			okDeps({
+				analyze: async ({ feedback }) => {
+					got = feedback;
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'new-model', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+				}
+			})
+		);
+		q.enqueue(item.id);
+		await q.idle();
+		expect(got).toEqual(current);
 	});
 
 	it('계속 실패하면 failed 와 오류 메시지를 남긴다', async () => {
