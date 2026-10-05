@@ -37,17 +37,27 @@ jobs:
           set -euo pipefail
           cd /opt/ymath
           echo "== BEFORE =="
-          git status --short --branch | head -12
+          git status --short --branch | head -6
           if ! git diff --quiet || ! git diff --cached --quiet; then
             git stash push -m "lead-clean-$(date +%Y%m%d%H%M%S)"
             echo "== STASHED =="
           else
             echo "== TREE ALREADY CLEAN =="
           fi
-          echo "== AFTER =="
-          git status --short | head -12
+          echo "== providers.json omlx.baseUrl 교정 =="
+          node -e '
+          const fs = require("fs");
+          const p = "/opt/ymath/user/config/providers.json";
+          const j = JSON.parse(fs.readFileSync(p, "utf8"));
+          if (!j.providers || !j.providers.omlx) { console.error("omlx 항목 없음"); process.exit(1); }
+          console.log("이전 baseUrl:", j.providers.omlx.baseUrl || "(없음)");
+          j.providers.omlx.baseUrl = "https://llm.xcv.kr/v1";
+          fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");
+          console.log("새 baseUrl:", j.providers.omlx.baseUrl);
+          '
+          KEY=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("/opt/ymath/user/config/providers.json","utf8")).providers.omlx.apiKey)')
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -H "Authorization: Bearer $KEY" https://llm.xcv.kr/v1/models || echo "rc=$?")
+          echo "인증 포함 /v1/models -> HTTP $code"
           git log -1 --format='%h %s'
-          echo "== oMLX endpoint from deploy host =="
-          curl -sS -o /dev/null -w "https://llm.xcv.kr:9000/v1/models -> HTTP %{http_code} (%{time_total}s)\n" --max-time 15 https://llm.xcv.kr:9000/v1/models || echo "curl failed rc=$?"
           REMOTE
           } | ssh -i "$RUNNER_TEMP/ssh_key" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 y@10.0.0.2 'bash -s'
