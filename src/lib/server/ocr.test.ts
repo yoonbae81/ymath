@@ -52,12 +52,15 @@ describe('runOcr (oMLX chat/completions)', () => {
 		expect(url).toBe('https://omlx.test/v1/chat/completions');
 		expect(headers).toMatchObject({ Authorization: 'Bearer test-key', 'Content-Type': 'application/json' });
 		expect(body.model).toBe('PaddleOCR-VL-1.6-mlx');
-		expect(body.messages).toHaveLength(1);
-		expect(body.messages[0].content[0]).toEqual({
+		expect(body.messages).toHaveLength(2);
+		expect(body.messages[0]).toMatchObject({ role: 'system' });
+		expect(body.messages[0].content).toContain('Markdown');
+		expect(body.messages[1].content[0]).toEqual({
 			type: 'image_url',
 			image_url: { url: 'data:image/jpeg;base64,aW1n' }
 		});
-		expect(body.messages[0].content[1].text).toContain('Markdown 본문만 출력');
+		expect(body.messages[1].content[1].text).toContain('Markdown 본문만 출력');
+		expect(body.stream).toBe(false);
 	});
 
 	it('OCR_MODEL 환경변수로 모델을 바꾼다', async () => {

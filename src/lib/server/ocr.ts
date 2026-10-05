@@ -30,6 +30,11 @@ export async function runOcr(dir: string): Promise<string> {
 				model: s.ocrModel,
 				messages: [
 					{
+						role: 'system',
+						content:
+							'당신은 수학 문제 이미지 OCR 도구입니다. 이미지에 보이는 모든 텍스트와 수식을 원문 순서대로 정확히 판독해 Markdown으로 전사하세요. 문제를 풀거나 설명하지 말고 전사 결과만 출력하세요.'
+					},
+					{
 						role: 'user',
 						content: [
 							{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } },
@@ -41,7 +46,8 @@ export async function runOcr(dir: string): Promise<string> {
 					}
 				],
 				max_tokens: 8192,
-				temperature: 0
+				temperature: 0,
+				stream: false
 			}),
 			signal: controller.signal
 		});
