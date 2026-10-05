@@ -59,9 +59,8 @@ export const settings = () => {
 	agyBin: process.env.AGY_BIN ?? 'agy',
 	// 사진을 읽어야 하므로 이미지 입력이 되는 모델. `agy models` 로 목록을 볼 수 있다
 	agyModel: process.env.AGY_MODEL ?? 'gemini-3.1-pro-high',
-	// OCR 은 내부망 mdconv 변환 서비스(jpeg → oMLX PaddleOCR-VL)로 한다. m 은 edge /etc/hosts 에 192.168.1.9 로
-	// 등록돼 있고, Caddy 가 http://m/mdconv/* 를 6000 번(mdconv)으로 프록시한다. 서비스가 떠 있어야 OCR 이 성공한다
-	ocrUrl: process.env.OCR_URL ?? 'http://m/mdconv',
+	// OCR 주소와 키는 별도 설정을 두지 않고 providers.json 의 omlx 를 함께 쓴다. 모델만 환경변수로 바꿀 수 있다
+	ocrModel: process.env.OCR_MODEL?.trim() || 'PaddleOCR-VL-1.6-mlx',
 	// 15 분. 로컬 27B(oMLX Qwen3.8) 같은 느린 모델은 로드+추론만 수 분이 걸린다
 	analyzeTimeoutMs: Number(process.env.ANALYZE_TIMEOUT_MS ?? 15 * 60_000),
 	ocrTimeoutMs: Number(process.env.OCR_TIMEOUT_MS ?? 2 * 60_000),

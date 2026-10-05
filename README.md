@@ -84,7 +84,7 @@
 
 ```
 사진 → 축소(긴 변 1600px) + 그레이스케일 JPEG → image.jpg (OCR·LLM 입력과 보관·표시를 겸함)
-     → mdconv(OCR: PaddleOCR-VL via oMLX) → ocr.md
+     → oMLX chat/completions(OCR: PaddleOCR-VL) → ocr.md
      → LLM(zai/codex/agy)에 사진 + OCR + 지침 + 분류 체계 → record.json
 ```
 
@@ -105,7 +105,7 @@ src/, static/    소스
 
 ## 실행
 
-요구: Node 20+, Z.AI Coding Plan API 키(`user/config/providers.json` 에 입력), 내부망 mdconv 서비스(`http://m/mdconv`, OCR 변환 담당 — `m` 은 edge `/etc/hosts` 에 192.168.1.9 로 등록, Caddy 가 `/mdconv/*` 를 6000 번으로 프록시) 가동. codex·agy·omlx를 쓸 때는 각 서버·CLI가 필요하다.
+요구: Node 20+, 각 LLM 주소·API 키(`user/config/providers.json` 에 입력), OCR과 omlx 분석용 OpenAI 호환 oMLX 서버가 필요하다. codex·agy를 쓸 때는 각 CLI도 필요하다.
 
 ```sh
 npm install
@@ -149,7 +149,7 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
   ```
   `analyzing` 이 2 이상이면 프로바이더가 서로 다른 항목이 동시에 돌고 있는 것이다(정상). `queued` 가 쌓여 있으면 그 프로바이더의 흐름이 막힌 것이다.
 - **base 경로를 빼먹으면 404**: 앱은 `/math` 아래에 있으므로 상태 확인도 `curl http://127.0.0.1:3141/math/items` 처럼 경로에 `/math` 이 들어가야 한다. 루트로 조회하면 404 가 뜨고, 그 404 는 경로 착각이지 장애가 아니다.
-- **`fetch failed`**: OCR(`http://m/mdconv`)과 omlx(`http://192.168.1.9:9000/v1`)가 **같은 내부망 서버(192.168.1.9)** 를 쓴다. 이 호스트가 죽거나 재시작되면 OCR 과 omlx 분석이 함께 `fetch failed` 로 실패한다. 코드 문제는 아니므로 해당 서버가 살아난 뒤 `/items` 에서 **다시 분석** 하면 된다(재분석 큐는 상태만 되돌리면 서버가 이어받는다).
+- **`fetch failed`**: OCR과 omlx 분석은 `user/config/providers.json`의 같은 `omlx.baseUrl`을 쓴다. 이 서버가 죽거나 주소가 틀리면 OCR은 사진만으로 계속 진행하지만 omlx 분석은 실패한다. 서버와 주소가 정상화된 뒤 `/items`에서 **다시 분석** 하면 된다.
 - **`분석 시간 초과(900초)`**: omlx 처럼 느린 로컬 모델이 이 한도를 넘으면 실패로 기록되고 1회 자동 재시도한다(`ANALYZE_MAX_ATTEMPTS`, 기본 2). 한도가 모자라면 `ANALYZE_TIMEOUT_MS` 를 올리되, 느린 원인을 먼저 확인한다(서버 부하·모델 교체).
 - **`정답 노출 가드레일 위반`**: LLM 결과에 정답·등식이 섞여 저장하지 않고, 위반 사유를 힌트로 주어 1회 자동 재지도로 다시 돌린다. 두 번 다 실패하면 `failed` 로 남고 사유가 화면에 보인다.
 - **재시도 큐 되돌리기**: `failed` 항목이 한꺼번에 쌓였을 때 서버를 재시작해도 `queued` 로 되돌아가지 않는다(재시작은 진행 중 항목만 회수한다). 그럴 때는 항목 `record.json` 을 `queued` 로 되돌린 뒤 서비스를 재시작한다.
@@ -174,7 +174,7 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
 | `CODEX_MODEL` | `gpt-5.5` | codex 모델. 이미지 입력을 지원해야 하고, `~/.codex/config.toml`의 기본 모델은 계정에 따라 거부될 수 있어 명시한다 |
 | `ANALYZE_TIMEOUT_MS` | `900000` | 분석 시간 제한(15 분 — 로컬 27B 추론 등 느린 모델 감안) |
 | `ANALYZE_MAX_ATTEMPTS` | `2` | 분석 실패 시 총 시도 횟수 |
-| `OCR_URL` | `http://m/mdconv` | OCR 변환에 쓸 mdconv 서비스 주소(POST `/convert` 로 image.jpg → markdown). `m` 은 edge `/etc/hosts` 에 192.168.1.9 로 등록돼 있고 Caddy 가 `/mdconv/*` → 6000 프록시 |
+| `OCR_MODEL` | `PaddleOCR-VL-1.6-mlx` | oMLX OpenAI 호환 `chat/completions`로 직접 호출할 OCR 모델. 주소·API 키는 `providers.json`의 `omlx` 설정을 함께 쓴다 |
 | `OCR_TIMEOUT_MS` | `120000` | OCR 시간 제한 |
 | `USER_DIR`, `PROMPTS_DIR`, `CONFIG_DIR` | `./user`, `./user/prompts`, `./user/config` | 위치 변경 |
 | `PASSWORD` | (없음) | 내부망 밖에서 들어올 때 쓰는 비밀번호. **없으면 밖에서는 아무도 못 들어온다** |
