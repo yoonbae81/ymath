@@ -1,40 +1,18 @@
-# Save as .github/workflows/deploy.yml in each repository.
-# Works on Linux (systemd --user) and macOS (launchd) hosts.
-#
-# Secrets:   WG_CONFIG (wg-quick client config), SSH_KEY (private key)
-# Variables: HOST, USER              (required)
-#            SERVICE                 (optional) service(s) to restart, space-separated; default
-#                                    <repo>.service on Linux, none on macOS (launchd label)
-#            BUILD_CMD               (optional) e.g. "npm ci && npm run build"
-#            KNOWN_HOSTS             (optional) pinned host key; else accept-new (TOFU)
-#            DEPLOY_ROOT             (optional) default /opt
-# Host: <root>/<repo> is a clean git checkout of the pushed branch (main/master); `git fetch` works unattended.
-
-name: Deploy over WireGuard
+name: Read-only WireGuard routing diagnosis
 
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: deploy-${{ github.repository }}
-  cancel-in-progress: false
-
 jobs:
-  deploy:
+  diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     env:
-      HOST: ${{ vars.HOST }}
-      USER: ${{ vars.USER }}
-      SERVICE: ${{ vars.SERVICE }}
-      BUILD_CMD: ${{ vars.BUILD_CMD }}
+      USER_NAME: ${{ vars.USER }}
       KNOWN_HOSTS: ${{ vars.KNOWN_HOSTS }}
-      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
 
     steps:
       - name: Connect WireGuard
@@ -42,73 +20,205 @@ jobs:
           WG_CONFIG: ${{ secrets.WG_CONFIG }}
         run: |
           set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y wireguard-tools
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y wireguard-tools traceroute netcat-openbsd >/dev/null
           umask 077
-          # Runner has no resolvconf, so drop DNS=; a default route would cut off GitHub.
           printf '%s\n' "$WG_CONFIG" | tr -d '\r' | grep -viE '^\s*DNS\s*=' > "$RUNNER_TEMP/wg.conf"
           ! grep -qE 'AllowedIPs.*(0\.0\.0\.0/0|::/0)' "$RUNNER_TEMP/wg.conf"
           sudo wg-quick up "$RUNNER_TEMP/wg.conf"
 
-      - name: Deploy
+      - name: Collect read-only routing diagnosis
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
           set -euo pipefail
-          REPO="${GITHUB_REPOSITORY##*/}"
-          [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$REPO" != .* ]]
-          [[ "$USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-          [[ "$HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
-
           umask 077
-          printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$RUNNER_TEMP/ssh_key"
+          report="$RUNNER_TEMP/wg-report.txt"
+          key="$RUNNER_TEMP/ssh_key"
+          known="$RUNNER_TEMP/known_hosts"
+          remote_script="$RUNNER_TEMP/collect-host.sh"
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$key"
           if [ -n "$KNOWN_HOSTS" ]; then
-            printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"; CHECK=yes
+            printf '%s\n' "$KNOWN_HOSTS" > "$known"
+            check=yes
           else
-            CHECK=accept-new
+            : > "$known"
+            check=accept-new
           fi
 
-          # Variables are shell-quoted (%q) and prepended to the script sent over ssh.
-          {
-            printf 'repo=%q sha=%q branch=%q service=%q build=%q root=%q\n' \
-              "$REPO" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$SERVICE" "$BUILD_CMD" "$DEPLOY_ROOT"
-            cat <<'REMOTE'
-          set -euo pipefail
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-          export GIT_TERMINAL_PROMPT=0
+          cat > "$remote_script" <<'REMOTE'
+          set -u
+          label="$1"
+          printf '===== NODE %s BEGIN =====\n' "$label"
+          printf 'UTC='; date -u +%FT%TZ
+          printf 'HOSTNAME='; uname -n
+          printf 'UNAME='; uname -a
+          printf 'USER='; id
 
-          # Pull exactly the commit that triggered this run.
-          cd "${root:-/opt}/$repo"
-          [ "$(git branch --show-current)" = "$branch" ]
-          git diff --quiet && git diff --cached --quiet
-          git fetch -q origin "$branch"
-          git merge --ff-only "$sha"
+          printf '\n--- ip -br addr ---\n'
+          ip -br addr 2>&1 || true
+          printf '\n--- ip route show table all ---\n'
+          ip route show table all 2>&1 || true
+          printf '\n--- ip rule show ---\n'
+          ip rule show 2>&1 || true
+          for destination in 192.168.1.2 192.168.1.9 192.168.1.0/24 10.0.0.1 10.0.0.2 10.0.0.10; do
+            printf '\n--- ip route get %s ---\n' "$destination"
+            ip route get "$destination" 2>&1 || true
+          done
 
-          [ -z "$build" ] || bash -euo pipefail -c "$build"
-
-          # Restart each listed service (default <repo>.service if it exists).
-          export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-          if [ "$(uname -s)" = Darwin ]; then
-            for svc in $service; do
-              launchctl kickstart -k "gui/$(id -u)/$svc"; sleep 3
-              launchctl print "gui/$(id -u)/$svc" | grep -Eq '^\s*pid = [0-9]+'
+          printf '\n--- WireGuard runtime ---\n'
+          if command -v wg >/dev/null 2>&1; then
+            sudo -n wg show all 2>&1 || wg show all 2>&1 || true
+            for interface in $(ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^wg/ {print $2}'); do
+              printf '\nOWN_PUBLIC_KEY[%s]=' "$interface"
+              sudo -n wg show "$interface" public-key 2>/dev/null || wg show "$interface" public-key 2>/dev/null || printf '<unavailable>\n'
             done
           else
-            [ -n "$service" ] || ! systemctl --user cat "$repo.service" >/dev/null 2>&1 || service="$repo.service"
-            for svc in $service; do
-              systemctl --user restart "$svc"
-              systemctl --user is-active --quiet "$svc"
-            done
+            printf 'wg command unavailable\n'
           fi
+
+          printf '\n--- WireGuard config files (keys redacted before output) ---\n'
+          if sudo -n true 2>/dev/null; then
+            sudo -n bash -c '
+              shopt -s nullglob
+              files=(/etc/wireguard/*.conf)
+              if ((${#files[@]} == 0)); then
+                echo "no /etc/wireguard/*.conf files"
+              fi
+              for file in "${files[@]}"; do
+                printf "### %s mode=" "$file"
+                stat -c "%a owner=%U:%G" "$file" 2>/dev/null || true
+                awk '\''BEGIN { IGNORECASE=1 }
+                  /^[[:space:]]*(PrivateKey|PresharedKey)[[:space:]]*=/ {
+                    sub(/=.*/, "= <REDACTED>")
+                  }
+                  { print }'\'' "$file"
+              done
+            ' 2>&1 || true
+          else
+            printf 'passwordless sudo unavailable; config files not readable\n'
+            ls -la /etc/wireguard 2>&1 || true
+          fi
+
+          printf '\n--- wg-quick units ---\n'
+          systemctl list-unit-files 'wg-quick@*' --no-pager 2>&1 || true
+          systemctl list-units 'wg-quick@*' --all --no-pager 2>&1 || true
+
+          printf '\n--- forwarding and reverse-path filter ---\n'
+          for key_name in net.ipv4.ip_forward net.ipv6.conf.all.forwarding net.ipv4.conf.all.rp_filter net.ipv4.conf.default.rp_filter; do
+            sysctl "$key_name" 2>&1 || true
+          done
+
+          printf '\n--- firewall/NAT routing-relevant rules ---\n'
+          if sudo -n true 2>/dev/null; then
+            if command -v nft >/dev/null 2>&1; then
+              sudo -n nft list ruleset 2>&1 | sed -n '1,500p' || true
+            fi
+            if command -v iptables-save >/dev/null 2>&1; then
+              sudo -n iptables-save 2>&1 | grep -E '(^\*|^:|^-A (FORWARD|POSTROUTING|PREROUTING)|MASQUERADE|SNAT|DNAT|wg0|192\.168\.1\.)' || true
+            fi
+            if command -v ufw >/dev/null 2>&1; then
+              sudo -n ufw status verbose 2>&1 || true
+            fi
+          fi
+
+          printf '\n--- reachability probes (read-only) ---\n'
+          for destination in 10.0.0.1 192.168.1.2 192.168.1.9; do
+            printf '\n### ping %s\n' "$destination"
+            ping -c 2 -W 2 "$destination" 2>&1 || true
+            printf '### traceroute %s\n' "$destination"
+            traceroute -n -m 5 -w 1 "$destination" 2>&1 || true
+          done
+
+          if [ "$label" = deploy ]; then
+            printf '\n--- 10.0.0.1 lightweight identity probes ---\n'
+            ip neigh show 10.0.0.1 2>&1 || true
+            for port in 22 53 80 443 51820; do
+              if nc -z -w 2 10.0.0.1 "$port" >/dev/null 2>&1; then
+                printf 'TCP_PORT_%s=open\n' "$port"
+              else
+                printf 'TCP_PORT_%s=closed_or_filtered\n' "$port"
+              fi
+            done
+            timeout 4 ssh-keyscan -T 2 10.0.0.1 2>&1 || true
+          fi
+          printf '===== NODE %s END =====\n' "$label"
           REMOTE
-          } | ssh -i "$RUNNER_TEMP/ssh_key" \
-                -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
-                -o ServerAliveInterval=15 -o ServerAliveCountMax=20 \
-                -o "StrictHostKeyChecking=$CHECK" \
-                -o "UserKnownHostsFile=$RUNNER_TEMP/known_hosts" \
-                "$USER@$HOST" bash -s
+          chmod 700 "$remote_script"
+
+          {
+            printf 'RUN_ID=%s\n' "$GITHUB_RUN_ID"
+            printf 'RUN_ATTEMPT=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'COLLECTED_AT='; date -u +%FT%TZ
+            printf '\n===== RUNNER WIREGUARD BEGIN =====\n'
+            ip -br addr 2>&1 || true
+            ip route show table all 2>&1 || true
+            sudo wg show all 2>&1 || true
+            printf '===== RUNNER WIREGUARD END =====\n'
+          } > "$report"
+
+          collect_node() {
+            label="$1"
+            host="$2"
+            printf '\n===== SSH TARGET %s (%s) =====\n' "$label" "$host" >> "$report"
+            if ssh -i "$key" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+              -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+              -o "StrictHostKeyChecking=$check" \
+              -o "UserKnownHostsFile=$known" \
+              "$USER_NAME@$host" 'bash -s --' "$label" < "$remote_script" >> "$report" 2>&1; then
+              printf 'SSH_RESULT[%s]=success\n' "$label" >> "$report"
+            else
+              status=$?
+              printf 'SSH_RESULT[%s]=failed exit=%s\n' "$label" "$status" >> "$report"
+            fi
+          }
+
+          collect_node deploy 10.0.0.2
+          collect_node edge 10.0.0.10
+
+          cat > "$RUNNER_TEMP/public-cert.pem" <<'CERT'
+          -----BEGIN CERTIFICATE-----
+          MIIDxDCCAiwCCQDQatyeLzb0MjANBgkqhkiG9w0BAQsFADAkMSIwIAYDVQQDDBl3
+          Zy1yZWFkb25seS1kaWFnLTIwMjYxMDA1MB4XDTI2MTAwNTEyMzIwN1oXDTI2MTAw
+          NjEyMzIwN1owJDEiMCAGA1UEAwwZd2ctcmVhZG9ubHktZGlhZy0yMDI2MTAwNTCC
+          AaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGBANy5d5stySYhPK27/97MOG/4
+          Z55RKlMQQV0JqukVQk1GxEC3YQrhyGTl7h4XPyGF3TEFrpxeWdJNt0Orhql299j0
+          y1zAxnsnD1SpZCHP9K9TDilnoqxN69Fo9pX5D9jzzkR9GzeLcSP3bAj0RhhrLooB
+          Hat3IBQcEsrOjGSAWnUpI7bMXF6MLzkXiMbxaH7FdMWkEG/P4oIDhP53Ua+4IJpy
+          8/hrgZBEU6ABPZLTDTP0UFmsKwSylkzt8rOlciPhVLkeMJWuSk/NYQscp+qz1dD5
+          mua0TMnYPs8mOz0JJ3IHAa3AJMjJaYirIo2TVGnTjBdK3KuXm5Bqt5/aesnw6vmq
+          x2zfqm5INY87rHX9hGExhKWDQbOlJC8J/zMazmMLHCb/q+vcJapdcaxykA/5R3C0
+          9HtIXMO86XcQqFltomd43LEbHgUKXMp8/O+oJnD8xmaHyjI3rscrnYPxmpMbnLod
+          LkvA+p7JthI5ITay0KhnMkBmUnba92XemIgUSXwz8QIDAQABMA0GCSqGSIb3DQEB
+          CwUAA4IBgQAoVV8wrGI32QP6VZb8wIOljZiMlKmfOMk0PKMOpqwT58uU9kceZyMz
+          ODVrPJLPb9/S+YtdMzIn7hCdU5Mw4xEbyVVu7rYEg8FqguKClz1n+BPyc6dAQY7N
+          4ptOXI3coiicQx9DilYphY/Py9SWuuI8Le2dFVny31N4yZHyMfh03L9ABcMJhZ4D
+          nY/NnC///8dmdbnE9BwYDgtEqMHpMyIJjVkwDz2QVqCItshqLi6oxqEjCqXZMsq2
+          28S9T+Afic6/llM8VcHXDg66a3/MUyrl7TwPZPyPbAYvzKYLch38+g/RoGkKbk9X
+          uuZ/7/54Bty/4ZUVqEreJs6JkG31IiiIX6guHzVIlQSf690EmMdjp/h9SqYTOlBJ
+          hsgaYdyqJXzpTDF33NVzQ9ZaMESwjwPQIUUu1Z6rydmPxw4ZDMb5zZ4ZNKiXetCE
+          3ksXrQStXU9xvTnPm6H9wFoM9OIfERlO5Bf0ZWkxH/x0QUyM9mYLtYNBhpK2kMhp
+          EBe/7CGor7U=
+          -----END CERTIFICATE-----
+          CERT
+
+          openssl cms -encrypt -binary -aes-256-cbc \
+            -in "$report" -out "$RUNNER_TEMP/wg-report.cms" -outform DER \
+            "$RUNNER_TEMP/public-cert.pem"
+          printf 'Encrypted report bytes: '
+          wc -c < "$RUNNER_TEMP/wg-report.cms"
+
+      - name: Upload encrypted report
+        uses: actions/upload-artifact@v4
+        with:
+          name: wg-readonly-diagnosis-${{ github.run_id }}
+          path: ${{ runner.temp }}/wg-report.cms
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Disconnect and clean up
         if: always()
         run: |
           sudo wg-quick down "$RUNNER_TEMP/wg.conf" || true
-          rm -f "$RUNNER_TEMP"/{wg.conf,ssh_key,known_hosts}
+          rm -f "$RUNNER_TEMP"/{wg.conf,ssh_key,known_hosts,collect-host.sh,wg-report.txt,wg-report.cms,public-cert.pem}
