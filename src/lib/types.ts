@@ -1,7 +1,7 @@
 /** 분석에 쓸 수 있는 LLM */
 export const PROVIDERS = ['zai', 'codex', 'agy', 'omlx'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)', omlx: 'Qwen3.8 27B' };
+export const PROVIDER_LABEL: Record<Provider, string> = { zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)', omlx: 'Qwen3.6 35B-A3B' };
 
 /** 삭제된 LLM(claude). 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
 const LEGACY_PROVIDER_LABEL: Record<string, string> = { claude: 'Claude' };

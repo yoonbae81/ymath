@@ -21,9 +21,9 @@ beforeEach(() => {
 	work = mkdtempSync(join(tmpdir(), 'ymath-prov-'));
 	process.env.DATA_DIR = join(work, 'data'); // knownPatternIds 가 읽는다(비어 있음)
 	process.env.CONFIG_DIR = work; // 실제 user/config/providers.json 이 테스트에 새지 않게 한다
-	// z.ai·oMLX 경로는 키가 없으면 호출 전에 실패하므로 기본 케이스에선 키를 준다
+	// z.ai 경로는 키가 없으면 호출 전에 실패하므로 기본 케이스에선 키를 준다. omlx 는 providers.json 픽스처로 지정한다(단일 소스)
 	process.env.ZAI_API_KEY = 'test-key';
-	process.env.OMLX_API_KEY = 'test-key';
+	writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', apiKey: 'test-key', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
 	writeFileSync(join(work, 'image.jpg'), 'img');
 	writeFileSync(join(work, 'out.json'), JSON.stringify(validAnalysis()));
 	process.env.FAKE_LOG = join(work, 'log.json');
@@ -50,17 +50,17 @@ beforeEach(() => {
 });
 afterEach(() => {
 	vi.restoreAllMocks();
-	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER', 'ZAI_API_KEY', 'OMLX_API_KEY', 'CONFIG_DIR']) delete process.env[k];
+	for (const k of ['DATA_DIR', 'FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'AGY_BIN', 'ANALYZE_PROVIDER', 'ZAI_API_KEY', 'CONFIG_DIR']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
 
 const run = (r: ItemRecord) => analyzeItem({ record: r, dir: work, ocrText: '$x$' });
 
 describe('분석 LLM 선택', () => {
-	it('기본값은 omlx(Qwen3.8 27B)', async () => {
+	it('기본값은 omlx(Qwen3.6 35B-A3B)', async () => {
 		expect(providerFor(record())).toBe('omlx');
 		const res = await run(record());
-		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.8-27B-8bit' });
+		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.6-35B-A3B' });
 	});
 
 	it('ANALYZE_PROVIDER=codex 로 서버 기본값을 바꾼다', async () => {
@@ -204,11 +204,11 @@ describe('분석 LLM 선택', () => {
 			})
 		);
 		const res = await run(record('omlx'));
-		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.8-27B-8bit', taxonomyIssues: [], guardrailWarnings: [] });
-		expect(capturedUrl).toBe('http://192.168.1.9:9000/v1/chat/completions');
-		expect(capturedBody.model).toBe('Qwen3.8-27B-8bit');
+		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.6-35B-A3B', taxonomyIssues: [], guardrailWarnings: [] });
+		expect(capturedUrl).toBe('http://omlx.test/v1/chat/completions');
+		expect(capturedBody.model).toBe('Qwen3.6-35B-A3B');
 		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
-		// Qwen3.8 은 멀티모달 — 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
+		// Qwen3.6 은 멀티모달 — 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
 		const parts = capturedBody.messages[1].content as any[];
 		expect(parts).toHaveLength(2);
 		expect(parts[0].type).toBe('image_url');
@@ -218,8 +218,8 @@ describe('분석 LLM 선택', () => {
 		expect(parts[1].text).toContain('준수해야 할 JSON Schema');
 	});
 
-	it('OMLX_API_KEY 가 없으면 oMLX 를 호출하지 않고 사유를 알린다', async () => {
-		delete process.env.OMLX_API_KEY;
+	it('providers.json 의 omlx 에 apiKey 가 없으면 oMLX 를 호출하지 않고 사유를 알린다', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
 		await expect(run(record('omlx'))).rejects.toThrow(/oMLX API 키가 설정되지 않았습니다/);

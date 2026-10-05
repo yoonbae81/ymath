@@ -271,22 +271,25 @@ async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	return { output: parseJsonBody('zai', content), model: s.zaiModel };
 }
 
-/** 집 내부망 oMLX(Qwen3.8 27B, 멀티모달)로 분석한다. zai 처럼 사진을 base64 data URL 로 첨부한다 */
+/** 집 내부망 oMLX(Qwen3.6 35B-A3B, 멀티모달)로 분석한다. zai 처럼 사진을 base64 data URL 로 첨부한다 */
 async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
-	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우거나 OMLX_API_KEY 환경변수를 설정하세요');
+	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
+	if (!s.omlxBaseUrl || !s.omlxModel)
+		throw new Error('user/config/providers.json 의 omlx 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
+	const { omlxBaseUrl, omlxApiKey, omlxModel } = s;
 	const content = await chatCompletion({
 		label: 'oMLX',
-		baseUrl: s.omlxBaseUrl,
-		apiKey: s.omlxApiKey,
-		model: s.omlxModel,
+		baseUrl: omlxBaseUrl,
+		apiKey: omlxApiKey,
+		model: omlxModel,
 		messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(c.imagePath, promptWithSchema(c.prompt, c.schema))],
 		jsonMode: true,
 		// Qwen 계열은 thinking 을 본문에 섞어 내보내므로 출력 예산을 넉넉히 둔다
 		extraBody: { max_tokens: 16384 },
 		timeoutMs: s.analyzeTimeoutMs
 	});
-	return { output: parseJsonBody('oMLX', content), model: s.omlxModel };
+	return { output: parseJsonBody('oMLX', content), model: omlxModel };
 }
 
 async function structuredWithCodex(c: StructuredCall): Promise<LlmOutput> {
@@ -409,17 +412,20 @@ export async function runText(provider: Provider, prompt: string): Promise<{ tex
 		return { text: text.trim(), model: s.zaiModel };
 	}
 	if (provider === 'omlx') {
-		if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우거나 OMLX_API_KEY 환경변수를 설정하세요');
+		if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
+		if (!s.omlxBaseUrl || !s.omlxModel)
+			throw new Error('user/config/providers.json 의 omlx 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
+		const { omlxBaseUrl, omlxApiKey, omlxModel } = s;
 		const text = await chatCompletion({
 			label: 'oMLX',
-			baseUrl: s.omlxBaseUrl,
-			apiKey: s.omlxApiKey,
-			model: s.omlxModel,
+			baseUrl: omlxBaseUrl,
+			apiKey: omlxApiKey,
+			model: omlxModel,
 			messages: [{ role: 'user', content: prompt }],
 			jsonMode: false,
 			timeoutMs: s.analyzeTimeoutMs
 		});
-		return { text: text.trim(), model: s.omlxModel };
+		return { text: text.trim(), model: omlxModel };
 	}
 	if (provider === 'agy') {
 		// 도구를 쓰려다 헤드리스 권한 거부로 응답이 비는 것을 막기 위해 본문만 답하게 한다

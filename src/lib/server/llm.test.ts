@@ -23,7 +23,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	vi.restoreAllMocks();
-	for (const k of ['FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CODEX_MODEL', 'AGY_BIN', 'AGY_MODEL', 'OMLX_API_KEY', 'CONFIG_DIR']) delete process.env[k];
+	for (const k of ['FAKE_LOG', 'FAKE_OUT', 'FAKE_MODE', 'CODEX_BIN', 'CODEX_MODEL', 'AGY_BIN', 'AGY_MODEL', 'CONFIG_DIR']) delete process.env[k];
 	rmSync(work, { recursive: true, force: true });
 });
 
@@ -145,7 +145,7 @@ describe('agy (구조화)', () => {
 
 describe('runText', () => {
 	it('omlx: OpenAI 호환 엔드포인트로 본문을 받는다', async () => {
-		process.env.OMLX_API_KEY = 'k';
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', apiKey: 'k', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
 		let url = '';
 		let body: any;
 		vi.stubGlobal(
@@ -157,15 +157,16 @@ describe('runText', () => {
 			})
 		);
 		const r = await runText('omlx', '써 줘');
-		expect(r).toEqual({ text: '보고서 본문', model: 'Qwen3.8-27B-8bit' });
-		expect(url).toBe('http://192.168.1.9:9000/v1/chat/completions');
-		expect(body.model).toBe('Qwen3.8-27B-8bit');
+		expect(r).toEqual({ text: '보고서 본문', model: 'Qwen3.6-35B-A3B' });
+		expect(url).toBe('http://omlx.test/v1/chat/completions');
+		expect(body.model).toBe('Qwen3.6-35B-A3B');
 		// 본문 요청에는 JSON 모드를 쓰지 않는다
 		expect(body.response_format).toBeUndefined();
 		expect(body.messages).toEqual([{ role: 'user', content: '써 줘' }]);
 	});
 
 	it('omlx: 키가 없으면 호출하지 않고 오류', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
 		await expect(runText('omlx', 'x')).rejects.toThrow(/oMLX API 키가 설정되지 않았습니다/);
 	});
 

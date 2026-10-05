@@ -132,7 +132,7 @@ describe('user/config/providers.json (LLM 설정)', () => {
 	it('파일이 없으면 빈 providers 이고 키도 비어 있다', () => {
 		expect(readLlmProviders()).toEqual({});
 		expect(settings().zaiApiKey).toBe('');
-		expect(settings().omlxApiKey).toBe('');
+		expect(settings().omlxApiKey).toBeUndefined();
 	});
 
 	it('provider별 apiKey·baseUrl·모델을 읽는다', () => {
