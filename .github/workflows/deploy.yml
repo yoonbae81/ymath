@@ -80,38 +80,51 @@ jobs:
           if not isinstance(api_key, str) or not api_key:
               raise SystemExit('providers.json: providers.omlx.apiKey is missing')
 
-          desired = 'https://llm.xcv.kr:9000'
           print(f'CONFIG_BEFORE_BASE_URL={before}')
           print(f'CONFIG_MODELS={json.dumps(configured_models, ensure_ascii=False)}')
           print('CONFIG_API_KEY_PRESENT=true')
-          changed = before != desired
+
+          required = {'PaddleOCR-VL-1.6-mlx', 'Qwen3.6-35B-A3B'}
+          candidates = [
+              ('requested', 'https://llm.xcv.kr:9000'),
+              ('standard_https', 'https://llm.xcv.kr/v1'),
+          ]
+          selected = None
+          available = []
+          for label, base_url in candidates:
+              endpoint = base_url.rstrip('/') + '/models'
+              request = urllib.request.Request(endpoint, headers={'Authorization': f'Bearer {api_key}'})
+              try:
+                  with urllib.request.urlopen(request, timeout=12) as response:
+                      status = response.status
+                      payload = json.load(response)
+                  ids = [entry.get('id') for entry in payload.get('data', []) if isinstance(entry, dict) and isinstance(entry.get('id'), str)]
+                  print(f'PROBE_{label.upper()}_URL={endpoint}', flush=True)
+                  print(f'PROBE_{label.upper()}_HTTP_STATUS={status}', flush=True)
+                  print(f'PROBE_{label.upper()}_MODELS={json.dumps(ids, ensure_ascii=False)}', flush=True)
+                  if status == 200 and required.issubset(ids):
+                      selected = base_url
+                      available = ids
+                      break
+              except urllib.error.HTTPError as error:
+                  print(f'PROBE_{label.upper()}_URL={endpoint}', flush=True)
+                  print(f'PROBE_{label.upper()}_HTTP_STATUS={error.code}', flush=True)
+              except Exception as error:
+                  print(f'PROBE_{label.upper()}_URL={endpoint}', flush=True)
+                  print(f'PROBE_{label.upper()}_ERROR={type(error).__name__}: {error}', flush=True)
+
+          if selected is None:
+              raise SystemExit('No reachable oMLX endpoint exposes both required models')
+
+          changed = before != selected
           if changed:
-              omlx['baseUrl'] = desired
+              omlx['baseUrl'] = selected
               temporary = path.with_name(path.name + '.tmp-omlx-endpoint')
               temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
               os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
               os.replace(temporary, path)
           print(f'CONFIG_CHANGED={str(changed).lower()}')
           print(f'CONFIG_AFTER_BASE_URL={omlx.get("baseUrl")}')
-
-          endpoint = desired + '/models'
-          request = urllib.request.Request(endpoint, headers={'Authorization': f'Bearer {api_key}'})
-          try:
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  status = response.status
-                  payload = json.load(response)
-          except urllib.error.HTTPError as error:
-              print(f'MODELS_URL={endpoint}')
-              print(f'MODELS_HTTP_STATUS={error.code}')
-              raise SystemExit(3)
-          except Exception as error:
-              print(f'MODELS_URL={endpoint}')
-              print(f'MODELS_ERROR={type(error).__name__}: {error}')
-              raise SystemExit(4)
-
-          available = [entry.get('id') for entry in payload.get('data', []) if isinstance(entry, dict) and isinstance(entry.get('id'), str)]
-          print(f'MODELS_URL={endpoint}')
-          print(f'MODELS_HTTP_STATUS={status}')
           print(f'MODELS_AVAILABLE={json.dumps(available, ensure_ascii=False)}')
           print(f'OCR_MODEL_PRESENT={str("PaddleOCR-VL-1.6-mlx" in available).lower()}')
           PY
