@@ -86,14 +86,21 @@ jobs:
 
           required = {'PaddleOCR-VL-1.6-mlx', 'Qwen3.6-35B-A3B'}
           candidates = [
-              ('requested', 'https://llm.xcv.kr:9000'),
               ('standard_https', 'https://llm.xcv.kr/v1'),
+              ('requested', 'https://llm.xcv.kr:9000'),
           ]
           selected = None
           available = []
           for label, base_url in candidates:
               endpoint = base_url.rstrip('/') + '/models'
-              request = urllib.request.Request(endpoint, headers={'Authorization': f'Bearer {api_key}'})
+              request = urllib.request.Request(
+                  endpoint,
+                  headers={
+                      'Authorization': f'Bearer {api_key}',
+                      'Accept': 'application/json',
+                      'User-Agent': 'curl/8.7.1',
+                  },
+              )
               try:
                   with urllib.request.urlopen(request, timeout=12) as response:
                       status = response.status
