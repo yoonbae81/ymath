@@ -64,6 +64,9 @@ jobs:
           echo "== 서비스 유닛 =="
           systemctl --user cat ymath.service 2>/dev/null | grep -iE "Environment|ExecStart" | head -6 || true
           echo "== 4건 현재 상태 =="
+          echo "== done 아닌 항목 omlx 재트리거 (gk8w: codex 한도 실패분) =="
+          code=$(curl -sS -o /tmp/gk8w.json -w "%{http_code}" --max-time 10 -X POST "http://10.0.0.2:3141/math/api/items/20261004-110107-gk8w/retry?provider=omlx" -H "X-Requested-With: ymath" 2>/dev/null) || true
+          echo "gk8w 재트리거 -> HTTP ${code:-none} $(head -c 100 /tmp/gk8w.json 2>/dev/null)"
           for id in 20261004-110150-csx1 20261004-110115-a42f 20261004-110107-gk8w 20261004-110054-x9tz; do
             node -e 'const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); const m=j.meta?j.meta.provider+"/"+j.meta.model+" @"+j.meta.analyzed_at:"(meta 없음)"; console.log(process.argv[1].split("/").pop(), "|", j.status, "|", m, "|", (j.error||"").slice(0,90));' /opt/ymath/user/data/items/$id/record.json 2>/dev/null || echo "$id record.json 없음"
           done
