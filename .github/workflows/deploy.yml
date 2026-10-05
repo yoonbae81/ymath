@@ -1,40 +1,19 @@
-# Save as .github/workflows/deploy.yml in each repository.
-# Works on Linux (systemd --user) and macOS (launchd) hosts.
-#
-# Secrets:   WG_CONFIG (wg-quick client config), SSH_KEY (private key)
-# Variables: HOST, USER              (required)
-#            SERVICE                 (optional) service(s) to restart, space-separated; default
-#                                    <repo>.service on Linux, none on macOS (launchd label)
-#            BUILD_CMD               (optional) e.g. "npm ci && npm run build"
-#            KNOWN_HOSTS             (optional) pinned host key; else accept-new (TOFU)
-#            DEPLOY_ROOT             (optional) default /opt
-# Host: <root>/<repo> is a clean git checkout of the pushed branch (main/master); `git fetch` works unattended.
-
-name: Deploy over WireGuard
+name: Diagnose oMLX over WireGuard
 
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: deploy-${{ github.repository }}
-  cancel-in-progress: false
-
 jobs:
-  deploy:
+  diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     env:
       HOST: ${{ vars.HOST }}
       USER: ${{ vars.USER }}
-      SERVICE: ${{ vars.SERVICE }}
-      BUILD_CMD: ${{ vars.BUILD_CMD }}
       KNOWN_HOSTS: ${{ vars.KNOWN_HOSTS }}
-      DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
 
     steps:
       - name: Connect WireGuard
@@ -42,70 +21,101 @@ jobs:
           WG_CONFIG: ${{ secrets.WG_CONFIG }}
         run: |
           set -euo pipefail
-          sudo apt-get update && sudo apt-get install -y wireguard-tools
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y wireguard-tools >/dev/null
           umask 077
-          # Runner has no resolvconf, so drop DNS=; a default route would cut off GitHub.
           printf '%s\n' "$WG_CONFIG" | tr -d '\r' | grep -viE '^\s*DNS\s*=' > "$RUNNER_TEMP/wg.conf"
           ! grep -qE 'AllowedIPs.*(0\.0\.0\.0/0|::/0)' "$RUNNER_TEMP/wg.conf"
           sudo wg-quick up "$RUNNER_TEMP/wg.conf"
 
-      - name: Deploy
+      - name: Inspect and correct oMLX provider
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
           set -euo pipefail
-          REPO="${GITHUB_REPOSITORY##*/}"
-          [[ "$REPO" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$REPO" != .* ]]
-          [[ "$USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
-          [[ "$HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.:-]*$ ]]
-
           umask 077
           printf '%s\n' "$SSH_KEY" | tr -d '\r' > "$RUNNER_TEMP/ssh_key"
           if [ -n "$KNOWN_HOSTS" ]; then
-            printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"; CHECK=yes
+            printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/known_hosts"
+            check=yes
           else
-            CHECK=accept-new
+            check=accept-new
           fi
 
-          # Variables are shell-quoted (%q) and prepended to the script sent over ssh.
-          {
-            printf 'repo=%q sha=%q branch=%q service=%q build=%q root=%q\n' \
-              "$REPO" "$GITHUB_SHA" "$GITHUB_REF_NAME" "$SERVICE" "$BUILD_CMD" "$DEPLOY_ROOT"
-            cat <<'REMOTE'
+          ssh -i "$RUNNER_TEMP/ssh_key" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            -o "StrictHostKeyChecking=$check" \
+            -o "UserKnownHostsFile=$RUNNER_TEMP/known_hosts" \
+            "$USER@$HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
-          export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-          export GIT_TERMINAL_PROMPT=0
-
-          # Pull exactly the commit that triggered this run.
-          cd "${root:-/opt}/$repo"
-          [ "$(git branch --show-current)" = "$branch" ]
-          git diff --quiet && git diff --cached --quiet
-          git fetch -q origin "$branch"
-          git merge --ff-only "$sha"
-
-          [ -z "$build" ] || bash -euo pipefail -c "$build"
-
-          # Restart each listed service (default <repo>.service if it exists).
+          cd /opt/ymath
+          printf 'DEPLOY_HEAD=%s\n' "$(git rev-parse --short HEAD)"
+          printf 'DEPLOY_BRANCH=%s\n' "$(git branch --show-current)"
+          printf 'DEPLOY_STATUS_BEGIN\n'
+          git status --short
+          printf 'DEPLOY_STATUS_END\n'
+          printf 'DEPLOY_DIFF_SHA256=%s\n' "$(git diff --binary | sha256sum | cut -d' ' -f1)"
           export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-          if [ "$(uname -s)" = Darwin ]; then
-            for svc in $service; do
-              launchctl kickstart -k "gui/$(id -u)/$svc"; sleep 3
-              launchctl print "gui/$(id -u)/$svc" | grep -Eq '^\s*pid = [0-9]+'
-            done
-          else
-            [ -n "$service" ] || ! systemctl --user cat "$repo.service" >/dev/null 2>&1 || service="$repo.service"
-            for svc in $service; do
-              systemctl --user restart "$svc"
-              systemctl --user is-active --quiet "$svc"
-            done
-          fi
+          printf 'SERVICE_ACTIVE=%s\n' "$(systemctl --user is-active ymath.service || true)"
+
+          python3 - <<'PY'
+          import json
+          import os
+          import stat
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
+
+          path = Path('/opt/ymath/user/config/providers.json')
+          document = json.loads(path.read_text(encoding='utf-8'))
+          providers = document.get('providers')
+          if not isinstance(providers, dict) or not isinstance(providers.get('omlx'), dict):
+              raise SystemExit('providers.json: providers.omlx is missing')
+          omlx = providers['omlx']
+          before = omlx.get('baseUrl')
+          models = omlx.get('models') if isinstance(omlx.get('models'), list) else []
+          configured_models = [entry.get('id') for entry in models if isinstance(entry, dict) and isinstance(entry.get('id'), str)]
+          api_key = omlx.get('apiKey')
+          if not isinstance(api_key, str) or not api_key:
+              raise SystemExit('providers.json: providers.omlx.apiKey is missing')
+
+          desired = 'https://llm.xcv.kr:9000'
+          print(f'CONFIG_BEFORE_BASE_URL={before}')
+          print(f'CONFIG_MODELS={json.dumps(configured_models, ensure_ascii=False)}')
+          print('CONFIG_API_KEY_PRESENT=true')
+          changed = before != desired
+          if changed:
+              omlx['baseUrl'] = desired
+              temporary = path.with_name(path.name + '.tmp-omlx-endpoint')
+              temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+              os.chmod(temporary, stat.S_IMODE(path.stat().st_mode))
+              os.replace(temporary, path)
+          print(f'CONFIG_CHANGED={str(changed).lower()}')
+          print(f'CONFIG_AFTER_BASE_URL={omlx.get("baseUrl")}')
+
+          endpoint = desired + '/models'
+          request = urllib.request.Request(endpoint, headers={'Authorization': f'Bearer {api_key}'})
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  status = response.status
+                  payload = json.load(response)
+          except urllib.error.HTTPError as error:
+              print(f'MODELS_URL={endpoint}')
+              print(f'MODELS_HTTP_STATUS={error.code}')
+              raise SystemExit(3)
+          except Exception as error:
+              print(f'MODELS_URL={endpoint}')
+              print(f'MODELS_ERROR={type(error).__name__}: {error}')
+              raise SystemExit(4)
+
+          available = [entry.get('id') for entry in payload.get('data', []) if isinstance(entry, dict) and isinstance(entry.get('id'), str)]
+          print(f'MODELS_URL={endpoint}')
+          print(f'MODELS_HTTP_STATUS={status}')
+          print(f'MODELS_AVAILABLE={json.dumps(available, ensure_ascii=False)}')
+          print(f'OCR_MODEL_PRESENT={str("PaddleOCR-VL-1.6-mlx" in available).lower()}')
+          PY
           REMOTE
-          } | ssh -i "$RUNNER_TEMP/ssh_key" \
-                -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=15 \
-                -o ServerAliveInterval=15 -o ServerAliveCountMax=20 \
-                -o "StrictHostKeyChecking=$CHECK" \
-                -o "UserKnownHostsFile=$RUNNER_TEMP/known_hosts" \
-                "$USER@$HOST" bash -s
 
       - name: Disconnect and clean up
         if: always()
