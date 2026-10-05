@@ -59,10 +59,24 @@ jobs:
           code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 15 -H "Authorization: Bearer $KEY" https://llm.xcv.kr/v1/models || echo "rc=$?")
           echo "인증 포함 /v1/models -> HTTP $code"
           git log -1 --format='%h %s'
-          echo "== 잔여 4건 재분석 트리거 =="
-          for id in 20261004-110150-csx1 20261004-110115-a42f 20261004-110107-gk8w 20261004-110054-x9tz; do
-            code=$(curl -sS -o /tmp/retry-$id.json -w "%{http_code}" -X POST "http://localhost:3141/math/api/items/$id/retry" -H "X-Requested-With: ymath" || echo "rc=$?")
-            echo "$id -> HTTP $code $(head -c 120 /tmp/retry-$id.json 2>/dev/null)"
+          echo "== 포트 리스닝 확인 =="
+          (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -E "3141" | head -5 || echo "3141 리스닝 없음"
+          echo "== 서비스 유닛 =="
+          systemctl --user cat ymath.service 2>/dev/null | grep -iE "Environment|ExecStart" | head -6 || true
+          echo "== 잔여 4건 재분석 트리거 (127.0.0.1 → 10.0.0.2) =="
+          ok=""
+          for host in 127.0.0.1 10.0.0.2; do
+            code=$(curl -sS -o /tmp/probe-$host.json -w "%{http_code}" --max-time 10 -X POST "http://$host:3141/math/api/items/20261004-110150-csx1/retry" -H "X-Requested-With: ymath" 2>/dev/null) || true
+            echo "probe $host -> HTTP ${code:-none} $(head -c 100 /tmp/probe-$host.json 2>/dev/null)"
+            if [ -n "${code:-}" ] && [ "$code" != "000" ]; then ok=$host; break; fi
           done
+          if [ -n "$ok" ]; then
+            for id in 20261004-110115-a42f 20261004-110107-gk8w 20261004-110054-x9tz; do
+              code=$(curl -sS -o /tmp/retry-$id.json -w "%{http_code}" --max-time 10 -X POST "http://$ok:3141/math/api/items/$id/retry" -H "X-Requested-With: ymath" 2>/dev/null) || true
+              echo "$id -> HTTP ${code:-none} $(head -c 100 /tmp/retry-$id.json 2>/dev/null)"
+            done
+          else
+            echo "두 주소 모두 실패 — 바인드 주소 확인 필요"
+          fi
           REMOTE
           } | ssh -i "$RUNNER_TEMP/ssh_key" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 y@10.0.0.2 'bash -s'
