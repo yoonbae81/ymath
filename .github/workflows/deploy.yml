@@ -149,7 +149,15 @@ jobs:
             [ -n "$done" ] || { echo "build timed out"; exit 1; }
           fi
 
-          rssh restart
+          # Restart is idempotent, so retry it as well when an otherwise
+          # successful build is followed by a transient SSH disconnect.
+          restarted=
+          for attempt in $(seq 1 6); do
+            if rssh restart; then restarted=1; break; fi
+            echo "Restart connection failed (attempt $attempt/6); retrying in 10s"
+            sleep 10
+          done
+          [ -n "$restarted" ] || { echo "Restart failed after 6 attempts"; exit 1; }
 
       - name: Disconnect and clean up
         if: always()
