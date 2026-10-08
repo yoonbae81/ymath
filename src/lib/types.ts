@@ -213,15 +213,26 @@ export function isItemInPeriod(createdAtIso: string, period: string, now = new D
 }
 
 export function getAvailablePeriods(
-	_items: { created_at: string }[] = [],
+	items: { created_at: string }[] = [],
 	now = new Date()
 ): { value: string; label: string; isPast: boolean }[] {
 	const curYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+	const pastMonths = new Set<string>();
+	for (const item of items) {
+		const created = new Date(item.created_at);
+		if (Number.isNaN(created.getTime())) continue;
+		const yearMonth = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
+		if (yearMonth < curYearMonth) pastMonths.add(yearMonth);
+	}
+
 	return [
 		{ value: '', label: '전체 기간', isPast: false },
 		{ value: 'today', label: '당일', isPast: false },
 		{ value: '10d', label: '최근 10일', isPast: false },
-		{ value: 'month', label: curYearMonth, isPast: false }
+		{ value: 'month', label: curYearMonth, isPast: false },
+		...[...pastMonths]
+			.sort((a, b) => b.localeCompare(a))
+			.map((yearMonth) => ({ value: yearMonth, label: yearMonth, isPast: true }))
 	];
 }
 
@@ -264,4 +275,3 @@ export interface ReportRecord {
 		stray_workbooks?: string[];
 	} | null;
 }
-

@@ -76,7 +76,9 @@ jobs:
           cd "${root:-/opt}/$repo"
           d="${TMPDIR:-/tmp}/deploy-$repo"
 
-          if [ "$phase" = update ]; then
+          if [ "$phase" = probe ]; then
+            exit 0
+          elif [ "$phase" = update ]; then
             # Pull exactly the commit that triggered this run.
             [ "$(git branch --show-current)" = "$branch" ]
             git diff --quiet && git diff --cached --quiet
@@ -120,6 +122,16 @@ jobs:
                   -o "UserKnownHostsFile=$RUNNER_TEMP/known_hosts" \
                   "$USER@$HOST" bash -s
           }
+
+          # WireGuard can be up before the remote SSH endpoint is ready. Retry a
+          # read-only probe so a transient timeout does not drop this deployment.
+          ready=
+          for attempt in $(seq 1 6); do
+            if rssh probe >/dev/null 2>&1; then ready=1; break; fi
+            echo "SSH endpoint not ready (attempt $attempt/6); retrying in 10s"
+            sleep 10
+          done
+          [ -n "$ready" ] || { echo "SSH endpoint unavailable after 6 attempts"; exit 1; }
 
           rssh update
 
