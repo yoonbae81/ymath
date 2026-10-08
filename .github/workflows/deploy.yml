@@ -67,29 +67,34 @@ jobs:
             CHECK=accept-new
           fi
 
-          # Remote script; phase=update|poll|restart. The build runs detached on the
-          # host so a dropped ssh connection cannot kill it; the runner polls for it.
+          # Remote script; phase=probe|update|poll|restart. Fetch, merge, and build
+          # run detached so a dropped ssh connection cannot kill the deployment.
           cat > "$RUNNER_TEMP/remote.sh" <<'REMOTE'
           set -euo pipefail
           export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
           export GIT_TERMINAL_PROMPT=0
           cd "${root:-/opt}/$repo"
-          d="${TMPDIR:-/tmp}/deploy-$repo"
+          d="${TMPDIR:-/tmp}/deploy-$repo-$sha"
 
           if [ "$phase" = probe ]; then
             exit 0
           elif [ "$phase" = update ]; then
-            # Pull exactly the commit that triggered this run.
+            # Validate the worktree synchronously, then detach every potentially
+            # long-running operation (including git fetch) from this SSH session.
             [ "$(git branch --show-current)" = "$branch" ]
             git diff --quiet && git diff --cached --quiet
-            git fetch -q origin "$branch"
-            git merge --ff-only "$sha"
-            if [ -n "$build" ]; then
-              rm -rf "$d"; mkdir -p "$d"
-              BUILD="$build" setsid nohup bash -c \
-                'bash -euo pipefail -c "$BUILD" >"$1/log" 2>&1; echo $? >"$1/rc"' _ "$d" \
-                </dev/null >/dev/null 2>&1 &
-            fi
+            rm -rf "$d"; mkdir -p "$d"
+            cat > "$d/job.sh" <<'JOB'
+          set -euo pipefail
+          cd "$deploy_dir"
+          git fetch -q origin "$branch"
+          git merge --ff-only "$sha"
+          if [ -n "$build" ]; then bash -euo pipefail -c "$build"; fi
+          JOB
+            env deploy_dir="$PWD" branch="$branch" sha="$sha" build="$build" \
+              setsid nohup bash -c \
+                'bash "$1" >"$2/log" 2>&1; rc=$?; printf "%s\n" "$rc" >"$2/rc"' \
+                _ "$d/job.sh" "$d" </dev/null >/dev/null 2>&1 &
           elif [ "$phase" = poll ]; then
             if [ -f "$d/rc" ]; then echo "rc=$(cat "$d/rc")"; tail -n 40 "$d/log"; else echo running; fi
           else
@@ -135,19 +140,17 @@ jobs:
 
           rssh update
 
-          if [ -n "$BUILD_CMD" ]; then
-            done=
-            for _ in $(seq 1 90); do
-              sleep 10
-              out=$(rssh poll 2>&1) || { echo "poll failed, retrying"; continue; }
-              if grep -q '^rc=' <<<"$out"; then
-                printf '%s\n' "$out"
-                [ "$(sed -n 's/^rc=//p' <<<"$out" | head -1)" = 0 ] || { echo "build failed"; exit 1; }
-                done=1; break
-              fi
-            done
-            [ -n "$done" ] || { echo "build timed out"; exit 1; }
-          fi
+          done=
+          for _ in $(seq 1 90); do
+            sleep 10
+            out=$(rssh poll 2>&1) || { echo "poll failed, retrying"; continue; }
+            if grep -q '^rc=' <<<"$out"; then
+              printf '%s\n' "$out"
+              [ "$(sed -n 's/^rc=//p' <<<"$out" | head -1)" = 0 ] || { echo "deploy job failed"; exit 1; }
+              done=1; break
+            fi
+          done
+          [ -n "$done" ] || { echo "deploy job timed out"; exit 1; }
 
           # Restart is idempotent, so retry it as well when an otherwise
           # successful build is followed by a transient SSH disconnect.
