@@ -124,17 +124,30 @@ describe('report generator & queue', () => {
 		expect(isPastMonthPeriod('2026-09', now)).toBe(false);
 	});
 
-	it('provides available periods up to current month', () => {
-		const now = new Date('2026-09-19T15:00:00+09:00');
+	it('provides unique past data months newest-first after the fixed periods', () => {
+		const now = new Date('2026-10-19T15:00:00+09:00');
 		const items = [
-			{ created_at: '2026-09-10T10:00:00Z' },
+			{ created_at: '2026-10-10T10:00:00+09:00' },
+			{ created_at: '2026-09-10T10:00:00+09:00' },
+			{ created_at: '2026-09-20T10:00:00+09:00' },
 			{ created_at: '2026-08-20T10:00:00Z' },
-			{ created_at: '2026-07-05T10:00:00Z' }
+			{ created_at: '2026-07-05T10:00:00Z' },
+			{ created_at: '2026-11-05T10:00:00+09:00' },
+			{ created_at: 'invalid' }
 		];
 
 		const periods = getAvailablePeriods(items, now);
-		expect(periods.map((p) => p.value)).toEqual(['', 'today', '10d', 'month']);
-		expect(periods.map((p) => p.label)).toEqual(['전체 기간', '당일', '최근 10일', '2026-09']);
+		expect(periods.map((p) => p.value)).toEqual(['', 'today', '10d', 'month', '2026-09', '2026-08', '2026-07']);
+		expect(periods.map((p) => p.label)).toEqual([
+			'전체 기간',
+			'당일',
+			'최근 10일',
+			'2026-10',
+			'2026-09',
+			'2026-08',
+			'2026-07'
+		]);
+		expect(periods.map((p) => p.isPast)).toEqual([false, false, false, false, true, true, true]);
 	});
 
 	it('fingerprints items and detects JSON additions or deletions', () => {
