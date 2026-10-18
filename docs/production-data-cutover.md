@@ -152,6 +152,16 @@ CLI는 승인/manifest/counts/backup/source 검사를 **원격 proxy 생성 및 
 
 API/실제 공개범위/운영 quota/실제 remote binding 검증은 **아직 미실행**이다. 로컬 검증은 운영 완료가 아니다.
 
+## 운영 apply 완료 기록 (2026-10-18)
+
+사용자 승인(삭제·public-approved·배포) 하에 실행했다.
+
+- 사전 원본 정리: 사고 보고서 4개 삭제, done 보고서 `20260919-221106-rep-sgcz`에서 없는 item `20260919-162612-99cx` 참조 제거(백업 `~/ymath-cutover/source-fix-backup/`).
+- manifest SHA `a08b0f91…54db75c`, counts items 69 / reports 1 / objects 221 / analyses 16 / feedback 72 / workbooks 17.
+- target: D1 `math`(ba4ef0c4), R2 `math`(구 `math-private` 삭제 후 신규 생성). apply `published: true`.
+- 완료 판정: D1 entities 70(=69+report), jobs/outbox/inngest 0. R2 221객체. 라이브 API 전수 대조 — 69개 item 상세/이미지 bytes·SHA-256/분석 provider·내용 전부 원본과 일치, 보고서 markdown까지 일치. `WORKBOOKS_JSON` var로 문제집 17개 순서 동일. 익명 요청 200 확인(public-approved).
+- runner: `user/runner-cloudflare.env`(RUNNER_URL/RUNNER_TOKEN, 0600)로 기동, bearer claim 200 확인. 원본 `user/data`는 read-only 보존.
+
 ## 로컬 검증 근거
 
 신규 테스트 **13개 통과**. 실제 Wrangler local D1/R2(`remoteBindings:false`, 별도 합성 config, `envFiles:[]`)에서 실행했다.
