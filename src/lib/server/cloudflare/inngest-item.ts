@@ -349,7 +349,8 @@ export function createItemAnalysisHandler(env: CloudflareEnv, options: ItemAnaly
 					model: openaiModel(config), timeout: retryEnv.ANALYZE_TIMEOUT_MS === undefined ? '15m' : `${Number(retryEnv.ANALYZE_TIMEOUT_MS)}ms`,
 					body: {
 						messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(analysisRequest.imageBase64, promptWithSchema(prompt(lastError), schema))],
-						response_format: { type: 'json_object' }, max_tokens: 16384, temperature: 0.2
+						response_format: { type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema } },
+						max_tokens: 16384, temperature: 0.2
 					}
 				});
 				parsed = parseResponse(response);

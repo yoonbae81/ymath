@@ -76,7 +76,7 @@ describe('Qwen 분석 HTTP', () => {
 		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.6-35B-A3B', taxonomyIssues: [], guardrailWarnings: [] });
 		expect(capturedUrl).toBe('http://omlx.test/v1/chat/completions');
 		expect(capturedBody.model).toBe('Qwen3.6-35B-A3B');
-		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
+		expect(capturedBody.response_format).toEqual({ type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema: expect.any(Object) } });
 		// Qwen3.6 은 멀티모달 — 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
 		const parts = capturedBody.messages[1].content as any[];
 		expect(parts).toHaveLength(2);

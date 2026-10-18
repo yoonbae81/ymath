@@ -125,7 +125,11 @@ async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 		messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(c.imagePath, promptWithSchema(c.prompt, c.schema))],
 		jsonMode: true,
 		// Qwen 계열은 thinking 을 본문에 섞어 내보내므로 출력 예산을 넉넉히 둔다
-		extraBody: { max_tokens: 16384 },
+		extraBody: {
+			max_tokens: 16384,
+			// 서버 측 스키마 강제(oMLX가 json_schema response_format 지원). 프롬프트 스키마는 보조 수단.
+			response_format: { type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema: c.schema } }
+		},
 		timeoutMs: s.analyzeTimeoutMs
 	});
 	return { output: parseJsonBody('oMLX', content), model: omlxModel };
