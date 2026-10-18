@@ -12,9 +12,9 @@
 
 name: Deploy over WireGuard
 
+# Production deployment is managed by Cloudflare Workers Builds.
+# Keep the legacy self-hosted deployment available only for manual recovery.
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
