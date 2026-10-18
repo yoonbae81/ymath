@@ -1,88 +1,47 @@
 import { json } from '@sveltejs/kit';
 import type { Handle, HandleServerError, RequestEvent } from '@sveltejs/kit';
 import { base } from '$app/paths';
-import {
-	SESSION_COOKIE,
-	clientIp,
-	guestMayRequest,
-	isInternalRequest,
-	passwordPolicyIssue,
-	verifySessionValue,
-	type Session
-} from '$lib/server/auth';
-import { getQueue } from '$lib/server/queue';
-import { auditLog, safeErrorForLog } from '$lib/server/log';
+import type { Session } from '$lib/types';
+import { safeErrorForLog } from '$lib/server/log';
+import { consumeRateLimit } from '$lib/server/cloudflare/repository';
+import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
+import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
-// 서버 시작 시 큐를 만들고, 처리 중이던 항목을 복구한다.
-getQueue();
-
-// OWASP ASVS V6.2.1: 비밀번호 최소 길이(8자) 정책을 기동 시 점검한다
-const passwordIssue = passwordPolicyIssue();
-if (passwordIssue) console.warn(`[보안] ${passwordIssue}`);
-
-/** base 와 SvelteKit 의 데이터 요청 꼬리(`/__data.json`)를 뗀 경로. 예: /ymath/items/__data.json → /items */
 function relativePath(pathname: string): string {
 	const path = (pathname.startsWith(base) ? pathname.slice(base.length) : pathname).replace(/\/__data\.json$/, '');
 	return path || '/';
 }
 
-/** 로그인 없이 볼 수 있는 곳: 로그인 화면·API, 로그아웃 API, 공유 링크 입구, 화면에 필요한 정적 파일 */
-const isPublic = (path: string) =>
-	path === '/login' || path === '/api/login' || path === '/api/logout' || path.startsWith('/s/') || path.startsWith('/_app/');
-
-function sessionOf(event: RequestEvent): Session | null {
-	// 쿠키에 유효한 세션(게스트 또는 가족)이 있으면 망 위치와 상관없이 해당 권한을 우선 적용한다
-	const cookie = verifySessionValue(event.cookies.get(SESSION_COOKIE));
-	if (cookie) return { role: cookie.role, via: 'cookie', exp: cookie.exp };
-
-	let address = '';
-	try {
-		address = event.getClientAddress();
-	} catch {
-		// 주소를 알 수 없으면 내부망으로 보지 않는다
-	}
-	if (address && isInternalRequest(address, event.request.headers)) return { role: 'family', via: 'network', exp: null };
-	return null;
-}
-
-/** 로그용 요청 IP. address 는 sessionOf 이 이미 구했지만 여기서는 헤더 위조 여부와 무관하게 판정값만 쓴다 */
-function requestIpOf(event: RequestEvent): string {
-	let address = '';
-	try {
-		address = event.getClientAddress();
-	} catch {
-		// 주소를 모르면 모두 같은 칸으로 센다
-	}
-	return clientIp(address, event.request.headers) || 'unknown';
-}
-
-/** 통과하면 null, 막으면 그 응답 */
-function guard(event: RequestEvent): Response | null {
-	const session = (event.locals.session = sessionOf(event));
-	const path = relativePath(event.url.pathname);
-	if (isPublic(path)) return null;
-
-	// 화면 이동이면 안내하고, API·데이터 요청은 상태 코드로 답한다
-	const wantsPage = event.request.method === 'GET' && !path.startsWith('/api/') && !event.url.pathname.endsWith('/__data.json');
-	const redirect = (to: string) => new Response(null, { status: 303, headers: { location: to } });
-
-	if (!session) {
-		// OWASP ASVS V16.3.2: 인가 실패(로그인 안 함) 이벤트 로깅
-		auditLog('authz', { ok: 'deny', reason: 'no-session', ip: requestIpOf(event), method: event.request.method, path });
-		if (!wantsPage) return json({ message: '로그인이 필요합니다' }, { status: 401 });
-		return redirect(`${base}/login?next=${encodeURIComponent(event.url.pathname + event.url.search)}`);
-	}
-	if (session.role === 'guest' && !guestMayRequest(event.request.method, path)) {
-		// OWASP ASVS V16.3.2: 인가 실패(읽기 전용 게스트의 허용 밖 요청) 이벤트 로깅
-		auditLog('authz', { ok: 'deny', reason: 'guest-readonly', ip: requestIpOf(event), method: event.request.method, path });
-		if (!wantsPage) return json({ message: '읽기 전용 링크로는 할 수 없어요' }, { status: 403 });
-		return redirect(`${base}/items`);
-	}
-	return null;
-}
-
 export const handle: Handle = async ({ event, resolve }) => {
-	const response = guard(event) ?? (await resolve(event));
+	if (NODE_RUNTIME) {
+		if (!event.platform?.env?.DB) (await import('$lib/server/queue')).getQueue();
+	}
+	event.locals.session = { role: 'family', via: 'anonymous', exp: null } as Session;
+	const relative = relativePath(event.url.pathname);
+	let response: Response | null = null;
+	if (relative === '/login' || relative === '/api/login' || relative === '/api/logout' || relative === '/api/share' || relative.startsWith('/s/')) {
+		response = new Response(JSON.stringify({ message: '이 경로는 더 이상 지원하지 않습니다' }), { status: 410, headers: { 'content-type': 'application/json' } });
+	}
+	const isInngestSdk = relative === '/api/inngest';
+	if (!response && event.request.method !== 'GET' && event.request.method !== 'HEAD' && !relative.startsWith('/api/runner/') && !isInngestSdk) {
+		const site = event.request.headers.get('sec-fetch-site');
+		const origin = event.request.headers.get('origin');
+		let originOk = true;
+		if (origin) { try { originOk = new URL(origin).host === (event.request.headers.get('x-forwarded-host') ?? event.request.headers.get('host') ?? event.url.host); } catch { originOk = false; } }
+		if (site === 'cross-site' || !originOk || event.request.headers.get(AJAX_HEADER) !== AJAX_VALUE) response = new Response(JSON.stringify({ message: '허용되지 않은 요청입니다' }), { status: 403, headers: { 'content-type': 'application/json' } });
+	}
+	if (!response && event.platform?.env?.DB && event.request.method !== 'GET' && event.request.method !== 'HEAD' && !relative.startsWith('/api/runner/') && !isInngestSdk) {
+		let address = '';
+		try { address = event.getClientAddress(); } catch { address = event.request.headers.get('cf-connecting-ip') ?? 'unknown'; }
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(address || 'unknown'));
+		const key = `rate:${Array.from(new Uint8Array(digest), (x) => x.toString(16).padStart(2, '0')).join('')}`;
+		try {
+			if (!(await consumeRateLimit(event.platform.env.DB, key, Date.now(), 10 * 60_000, 300))) response = new Response(JSON.stringify({ message: '요청が多すぎます' }), { status: 429, headers: { 'content-type': 'application/json' } });
+		} catch {
+			response = new Response(JSON.stringify({ message: '요청 제한 저장소에 연결할 수 없습니다' }), { status: 503, headers: { 'content-type': 'application/json' } });
+		}
+	}
+	response ??= await resolve(event);
 
 	// OWASP ASVS V3.4.3 / V13: 보안 헤더 설정
 	// 페이지(HTML) 응답은 SvelteKit 이 vite.config.ts 의 csp(hash 모드)로 인라인 스크립트 해시를

@@ -55,7 +55,7 @@
 	);
 
 	// 공유 링크로 들어온 방문자는 보기만 한다(보고서 작성·재작성·삭제 숨김)
-	const readonly = $derived(page.data.session?.role === 'guest');
+	const readonly = false;
 
 	// URL 쿼리 파라미터로 선택된 보고서 (?id=...)
 	const selectedId = $derived(page.url.searchParams.get('id'));

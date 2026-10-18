@@ -3,11 +3,8 @@
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';
-	import ShareMenu from '$lib/ShareMenu.svelte';
 
 	let { data, children } = $props();
-	// 읽기 전용(공유 링크로 들어온) 방문자는 올리기·링크 만들기를 보지 못한다
-	const guest = $derived(data.session?.role === 'guest');
 	// SSR 중에는 base 가 './' 같은 상대 경로라 href 로 현재 페이지를 판정할 수 없다.
 	// 그래서 base 와 무관한 path 로 판정한다(pathname 은 /ymath/upload 처럼 base 를 포함하므로 endsWith 로 비교).
 	const allLinks = [
@@ -15,7 +12,7 @@
 		{ path: '/items', icon: '📋', label: '문제별' },
 		{ path: '/areas', icon: '📊', label: '영역별' }
 	];
-	const links = $derived(guest ? allLinks.filter((l) => l.path !== '/upload') : allLinks);
+	const links = allLinks;
 	const isActive = (path: string) => page.url.pathname.replace(/\/$/, '').endsWith(path);
 </script>
 
@@ -24,8 +21,6 @@
 	<title>오답노트</title>
 </svelte:head>
 
-<!-- 로그인 화면(세션 없음)에는 메뉴를 보이지 않는다 -->
-{#if data.session}
 	<nav>
 		<div class="nav-inner">
 			{#each links as l (l.path)}
@@ -46,13 +41,9 @@
 				>
 					⚡
 				</a>
-				{#if !guest}
-					<ShareMenu canLogout={data.session.via === 'cookie'} />
-				{/if}
 			</div>
 		</div>
 	</nav>
-{/if}
 
 <main>
 	{@render children()}

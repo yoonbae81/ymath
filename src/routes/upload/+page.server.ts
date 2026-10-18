@@ -1,10 +1,12 @@
-import { loadWorkbooks } from '$lib/server/config';
-import { listRecords } from '$lib/server/store';
 import type { PageServerLoad } from './$types';
+import { cloudItems, workbooksFromEnv } from '$lib/server/cloudflare/runtime';
+import { NODE_RUNTIME, requireWorkerDatabase } from '$lib/server/runtime-target';
 
-export const load: PageServerLoad = ({ depends }) => {
+export const load: PageServerLoad = async ({ depends, platform }) => {
 	depends('app:recent');
-	const recent = listRecords()
+	requireWorkerDatabase(platform, NODE_RUNTIME);
+	const records = platform?.env?.DB ? await cloudItems(platform.env) : NODE_RUNTIME ? (await import('$lib/server/store')).listRecords() : [];
+	const recent = records
 		.slice(0, 6)
 		.map((r) => ({
 			id: r.id,
@@ -13,5 +15,6 @@ export const load: PageServerLoad = ({ depends }) => {
 			created_at: r.created_at,
 			asks: r.analysis?.asks ?? null
 		}));
-	return { workbooks: loadWorkbooks(), recent };
+	const workbooks = platform?.env?.DB ? workbooksFromEnv(platform.env.WORKBOOKS_JSON) : NODE_RUNTIME ? (await import('$lib/server/config')).loadWorkbooks() : [];
+	return { workbooks, recent };
 };

@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
-import { clientIp, mutationLimiter } from '$lib/server/auth';
+import { clientIp, mutationLimiter } from '$lib/server/request-utils';
 
 /**
  * 상태를 바꾸는 API 는 이 앱의 화면에서 보낸 요청만 받는다.

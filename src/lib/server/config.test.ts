@@ -131,7 +131,6 @@ describe('user/config/providers.json (LLM 설정)', () => {
 
 	it('파일이 없으면 빈 providers 이고 키도 비어 있다', () => {
 		expect(readLlmProviders()).toEqual({});
-		expect(settings().zaiApiKey).toBe('');
 		expect(settings().omlxApiKey).toBeUndefined();
 	});
 
@@ -147,13 +146,13 @@ describe('user/config/providers.json (LLM 설정)', () => {
 		expect(s.omlxModel).toBe('m1');
 	});
 
-	it('환경변수가 파일보다 우선하고, 모델은 환경변수가 없으면 파일값을 쓴다', () => {
-		write({ providers: { zai: { apiKey: 'file-key', models: [{ id: 'glm-5.3' }] } } });
-		process.env.ZAI_API_KEY = 'env-key';
-		const s = settings();
-		expect(s.zaiApiKey).toBe('env-key');
-		expect(s.zaiModel).toBe('glm-5.3');
-	});
+	it('레거시 provider 설정과 환경변수를 무시한다', () => {
+  write({ providers: { zai: { apiKey: 'fixture', models: [{id:'glm'}] } } });
+  process.env.ZAI_API_KEY = 'env-fixture';
+  expect(readLlmProviders()).toEqual({});
+  expect(settings()).not.toHaveProperty('zaiApiKey');
+  expect(settings().provider).toBe('omlx');
+ });
 
 	it('JSON이 깨지면 명확한 오류를 낸다', () => {
 		writeFileSync(join(dir, 'providers.json'), '{ 깨진 JSON');

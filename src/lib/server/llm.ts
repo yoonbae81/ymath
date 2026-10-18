@@ -1,9 +1,20 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import type { Provider } from '$lib/types';
 import { settings } from './config';
-import { exec } from './exec';
+import {
+	MATH_COACH_SYSTEM,
+	firstJsonObject,
+	imageUserMessage as base64ImageUserMessage,
+	isQuotaOrRateLimitError,
+	parseJsonBody,
+	promptWithSchema,
+	QuotaExceededError
+} from './llm-core';
+import type { ChatContentPart } from './llm-core';
+
+// 순수 구현은 llm-core.ts 가 소유하고 여기서 재노출한다(계약 보존).
+export { MATH_COACH_SYSTEM, firstJsonObject, isQuotaOrRateLimitError, parseJsonBody, promptWithSchema, QuotaExceededError };
+export type { ChatContentPart };
 
 /** 사진 1장 + 프롬프트를 보내 JSON 스키마에 맞는 결과를 받는 호출 */
 export interface StructuredCall {
@@ -11,7 +22,7 @@ export interface StructuredCall {
 	schema: object;
 	/** 작업 디렉터리(임시 파일도 여기에 만들고 지운다) */
 	dir: string;
-	/** 분석할 사진. codex 는 -i 로, zai·omlx 는 base64 data URL 로 첨부하고, agy 는 프롬프트에 적힌 경로를 view_file 로 연다 */
+	/** 분석할 사진. Qwen에 base64 data URL로 첨부한다 */
 	imagePath: string;
 }
 
@@ -20,167 +31,22 @@ export interface LlmOutput {
 	model: string;
 }
 
-/**
- * `agy -p --output-format json` 의 표준출력에서 구조화된 결과만 꺼낸다.
- * 헤드리스에서는 권한 확인창을 띄울 수 없어 도구가 자동 거부되면 status 는 SUCCESS 인데 응답이 비므로 그 경우를 따로 알린다.
- */
-export function parseAgyOutput(stdout: string): unknown {
-	let env: any;
-	try {
-		env = JSON.parse(stdout);
-	} catch {
-		throw new Error(`agy 출력이 JSON 이 아님: ${stdout.slice(0, 200)}`);
-	}
-	// 실패하면 status 가 ERROR 이고 사유는 error 필드에 있다(response 는 비어 있다)
-	if (env.status && env.status !== 'SUCCESS') throw new Error(`agy 오류(${env.status}): ${String(env.error ?? env.response ?? '').slice(0, 300)}`);
-	if (env.structured_output && typeof env.structured_output === 'object') return env.structured_output;
-	if (typeof env.response === 'string' && env.response.trim()) {
-		try {
-			const obj = JSON.parse(env.response);
-			// response 본문에는 도구 진행 표시(toolAction, toolSummary)가 섞여 나올 수 있다
-			delete obj.toolAction;
-			delete obj.toolSummary;
-			return obj;
-		} catch {
-			/* fallthrough */
-		}
-	}
-	const denied = (env.denied_actions ?? []).map((a: any) => a.display_name ?? a.action).join(', ');
-	if (denied) throw new Error(`agy 도구 권한이 거부되어 응답이 비었음(${denied}). 헤드리스에서는 허용되지 않는 도구를 쓰려 했습니다`);
-	throw new Error('agy 결과에 structured_output 이 없음');
-}
-
-/** codex 가 마지막 메시지로 쓴 JSON. 코드펜스로 감싸 오는 경우도 허용한다. */
-export function parseCodexOutput(text: string): unknown {
-	const body = text
-		.trim()
-		.replace(/^```(?:json)?\s*/i, '')
-		.replace(/\s*```$/, '');
-	try {
-		return JSON.parse(body);
-	} catch {
-		throw new Error(`codex 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
-	}
-}
-
-/** codex 는 실패 사유를 stderr 의 `ERROR:` 줄로 남기고 그 앞뒤에 훅 로그가 섞인다. */
-export function codexErrorMessage(stderr: string): string {
-	const lines = stderr.split('\n').map((l) => l.trim());
-	const errors = lines.filter((l) => l.startsWith('ERROR:'));
-	const last = errors.at(-1);
-	if (last) {
-		const raw = last.slice('ERROR:'.length).trim();
-		try {
-			const msg = JSON.parse(raw)?.error?.message;
-			if (typeof msg === 'string') return msg.slice(0, 300);
-		} catch {
-			/* JSON 이 아니면 그대로 */
-		}
-		return raw.slice(0, 300);
-	}
-	return lines.filter((l) => l && !l.startsWith('hook:')).slice(-3).join(' | ').slice(0, 300);
-}
-
-export class QuotaExceededError extends Error {
-	constructor(message: string, public readonly status?: number) {
-		super(message);
-		this.name = 'QuotaExceededError';
-	}
-}
-
-export function isQuotaOrRateLimitError(err: unknown): boolean {
-	if (err instanceof QuotaExceededError) return true;
-	const msg = String(err instanceof Error ? err.message : err).toLowerCase();
-	return (
-		msg.includes('429') ||
-		msg.includes('quota') ||
-		msg.includes('rate limit') ||
-		msg.includes('rate_limit') ||
-		msg.includes('insufficient_quota') ||
-		msg.includes('resource_exhausted') ||
-		msg.includes('too many requests') ||
-		msg.includes('1301') ||
-		msg.includes('1302')
-	);
-}
-
-/** 문자열 이스케이프를 고려해 본문에서 첫 번째 균형 잡힌 {...} 객체 범위를 찾는다 */
-export function firstJsonObject(text: string): string | null {
-	const start = text.indexOf('{');
-	if (start === -1) return null;
-	let depth = 0;
-	let inString = false;
-	let escape = false;
-	for (let i = start; i < text.length; i++) {
-		const ch = text[i];
-		if (inString) {
-			if (escape) escape = false;
-			else if (ch === '\\') escape = true;
-			else if (ch === '"') inString = false;
-			continue;
-		}
-		if (ch === '"') inString = true;
-		else if (ch === '{') depth++;
-		else if (ch === '}' && --depth === 0) return text.slice(start, i + 1);
-	}
-	return null;
-}
-
-/**
- * 코드펜스로 감싸진 경우, 심지어 모델의 thinking 이 본문에 섞인 경우에도 JSON 을 건진다.
- * oMLX 의 Qwen 계열은 reasoning 을 content 에 그대로 출력하는 일이 있다.
- */
-export function parseJsonBody(label: string, text: string): unknown {
-	const body = text
-		.trim()
-		.replace(/^```(?:json)?\s*/i, '')
-		.replace(/\s*```$/, '');
-	try {
-		return JSON.parse(body);
-	} catch {
-		/* 아래 폴백들 */
-	}
-	const salvage = firstJsonObject(body);
-	if (salvage) {
-		try {
-			return JSON.parse(salvage);
-		} catch {
-			/* 폴백도 실패하면 원인과 함께 아래에서 실패 */
-		}
-	}
-	throw new Error(`${label} 출력이 JSON 이 아님: ${text.slice(0, 200)}`);
-}
-
 const missingKeyError = (provider: string, how: string) => new Error(`${provider} API 키가 설정되지 않았습니다. ${how}`);
 
-const MATH_COACH_SYSTEM =
-	'당신은 학생의 수학 오답을 전문적으로 분석하고 코칭하는 수학 교육 전문가입니다. 주어진 JSON Schema를 엄격히 준수하여 순수 JSON 객체 하나만 출력하십시오. 마크다운 코드 블록이나 다른 텍스트는 일체 출력하지 마세요.';
-
-/** OpenAI 호환 멀티모달 콘텐츠 파트. Z.ai 비전 모델은 image_url 에 공개 URL 이나 base64 data URL 을 받는다 */
-type ChatContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
-
-const promptWithSchema = (prompt: string, schema: object) =>
-	`${prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
-
-/** image.jpg 를 base64 data URL 로 첨부한 멀티모달 user 메시지(zai·omlx 공통) */
-const imageUserMessage = (imagePath: string, prompt: string): { role: 'user'; content: ChatContentPart[] } => ({
-	role: 'user',
-	content: [
-		{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${readFileSync(imagePath).toString('base64')}` } },
-		{ type: 'text', text: prompt }
-	]
-});
+/** image.jpg 를 base64 data URL 로 첨부한 멀티모달 user 메시지(Qwen) */
+const imageUserMessage = (imagePath: string, prompt: string): { role: 'user'; content: ChatContentPart[] } =>
+	base64ImageUserMessage(readFileSync(imagePath).toString('base64'), prompt);
 
 /**
  * OpenAI 호환 chat/completions 한 번 호출하고 응답 본문을 반환한다.
- * z.ai 원격과 집 내부망 oMLX 가 같은 형식을 쓰므로 한 곳에서 429·할당량·빈 응답을 처리한다.
+ * 집 내부망 oMLX에서 한 곳에서 429·할당량·빈 응답을 처리한다.
  */
 async function chatCompletion(o: {
 	label: string;
 	baseUrl: string;
 	apiKey: string;
 	model: string;
-	/** content 는 문자열 또는 멀티모달 파트 배열(zai 는 이미지 data URL + 텍스트) */
+	/** content 는 문자열 또는 멀티모달 파트 배열(이미지 data URL + 텍스트) */
 	messages: { role: 'system' | 'user'; content: string | ChatContentPart[] }[];
 	/** response_format: json_object 를 보낸다. 미지원 서버를 위해 끌 수 있다 */
 	jsonMode: boolean;
@@ -245,33 +111,6 @@ async function chatCompletion(o: {
 	}
 }
 
-/**
- * 모델별 z.ai 요청 옵션. GLM-5.3-Flash·GLM-5V 계열은 추론을 강제해서 thinking 을 끌 수 없으므로
- * 텍스트 전용 모델(glm-5.3)일 때만 thinking 을 끈다. 추론 토큰이 응답 JSON 과 함께 max_tokens 를
- * 소비하므로 넉넉하게 둔다.
- */
-const zaiExtraBody = (model: string): Record<string, unknown> => ({
-	max_tokens: 16384,
-	...(/flash|5v/.test(model) ? {} : { thinking: { type: 'disabled' as const } })
-});
-
-async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
-	const s = settings();
-	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우거나 ZAI_API_KEY 환경변수를 설정하세요');
-	const content = await chatCompletion({
-		label: 'z.ai',
-		baseUrl: s.zaiBaseUrl,
-		apiKey: s.zaiApiKey,
-		model: s.zaiModel,
-		messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(c.imagePath, promptWithSchema(c.prompt, c.schema))],
-		jsonMode: true,
-		extraBody: zaiExtraBody(s.zaiModel),
-		timeoutMs: s.analyzeTimeoutMs
-	});
-	return { output: parseJsonBody('zai', content), model: s.zaiModel };
-}
-
-/** 집 내부망 oMLX(Qwen3.6 35B-A3B, 멀티모달)로 분석한다. zai 처럼 사진을 base64 data URL 로 첨부한다 */
 async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
@@ -292,103 +131,8 @@ async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	return { output: parseJsonBody('oMLX', content), model: omlxModel };
 }
 
-async function structuredWithCodex(c: StructuredCall): Promise<LlmOutput> {
-	const s = settings();
-	const schemaPath = join(c.dir, 'codex.schema.json');
-	const outPath = join(c.dir, 'codex.out.json');
-	writeFileSync(schemaPath, JSON.stringify(c.schema), 'utf8');
-	rmSync(outPath, { force: true });
-	try {
-		// -i 는 값을 여러 개 받으므로 뒤에 위치 인자를 두지 않는다(프롬프트는 stdin 으로 넘긴다).
-		// 읽기 전용 샌드박스: 사진은 첨부로 주므로 파일 시스템이나 셸 접근이 필요 없다.
-		const r = await exec(
-			s.codexBin,
-			[
-				'exec',
-				'-m',
-				s.codexModel,
-				'--ephemeral',
-				'--skip-git-repo-check',
-				'-s',
-				'read-only',
-				'-C',
-				c.dir,
-				'--output-schema',
-				schemaPath,
-				'-o',
-				outPath,
-				'-i',
-				c.imagePath
-			],
-			{ cwd: c.dir, input: c.prompt, timeoutMs: s.analyzeTimeoutMs }
-		);
-		if (r.timedOut) throw new Error(`분석 시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-		if (r.code !== 0) throw new Error(`codex 실패(code ${r.code}): ${codexErrorMessage(r.stderr)}`);
-		let text: string;
-		try {
-			text = readFileSync(outPath, 'utf8');
-		} catch {
-			throw new Error(`codex 가 결과 파일을 만들지 않음: ${codexErrorMessage(r.stderr)}`);
-		}
-		return { output: parseCodexOutput(text), model: s.codexModel };
-	} finally {
-		rmSync(schemaPath, { force: true });
-		rmSync(outPath, { force: true });
-	}
-}
-
-/**
- * Gemini 의 함수 선언 스키마는 enum 값이 문자열이어야 해서 숫자 enum([1,2,3])을 400 으로 거부한다.
- * agy 로 보낼 때만 숫자 enum 을 정수 범위(minimum/maximum)로 바꾼다. 결과 검증은 원래 스키마로 한다.
- */
-export function toGeminiSchema<T>(schema: T): T {
-	const walk = (n: any): any => {
-		if (Array.isArray(n)) return n.map(walk);
-		if (!n || typeof n !== 'object') return n;
-		const out: any = {};
-		for (const [k, v] of Object.entries(n)) out[k] = walk(v);
-		if (Array.isArray(out.enum) && out.enum.length && out.enum.every((x: unknown) => typeof x === 'number')) {
-			const nums = out.enum as number[];
-			delete out.enum;
-			out.type = nums.every(Number.isInteger) ? 'integer' : 'number';
-			out.minimum = Math.min(...nums);
-			out.maximum = Math.max(...nums);
-		}
-		return out;
-	};
-	return walk(schema);
-}
-
-/** -p 의 값으로 넘기는 프롬프트의 길이 한도(리눅스 단일 인자 상한 128KiB 보다 여유 있게) */
-export const AGY_MAX_PROMPT_BYTES = 120_000;
-
-async function structuredWithAgy(c: StructuredCall): Promise<LlmOutput> {
-	const s = settings();
-	const bytes = Buffer.byteLength(c.prompt, 'utf8');
-	// agy 는 프롬프트를 -p 인자로 받는다(stdin 미지원). 너무 크면 exec 가 E2BIG 로 알 수 없게 죽으므로 미리 알린다
-	if (bytes > AGY_MAX_PROMPT_BYTES) throw new Error(`agy 프롬프트가 너무 큼(${bytes}바이트 > ${AGY_MAX_PROMPT_BYTES}). 분류 체계나 지침을 줄이세요`);
-	const schemaPath = join(c.dir, 'agy.schema.json');
-	writeFileSync(schemaPath, JSON.stringify(toGeminiSchema(c.schema)), 'utf8');
-	try {
-		// 권한 우회 옵션(--dangerously-skip-permissions)은 쓰지 않는다. 사진은 view_file 로 읽고, 셸 명령은 프롬프트에서 금지한다.
-		const r = await exec(
-			s.agyBin,
-			['-p', c.prompt, '--model', s.agyModel, '--output-format', 'json', '--json-schema', schemaPath, '--add-dir', c.dir],
-			{ cwd: c.dir, timeoutMs: s.analyzeTimeoutMs }
-		);
-		if (r.timedOut) throw new Error(`분석 시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-		if (r.code !== 0 && !r.stdout.trim()) throw new Error(`agy 종료 코드 ${r.code}: ${r.stderr.trim().slice(-300)}`);
-		return { output: parseAgyOutput(r.stdout), model: s.agyModel };
-	} finally {
-		rmSync(schemaPath, { force: true });
-	}
-}
-
 /** 지정한 LLM 으로 사진을 분석해 구조화된 결과를 받는다. */
 export function runStructured(provider: Provider, call: StructuredCall): Promise<LlmOutput> {
-	if (provider === 'zai') return structuredWithZai(call);
-	if (provider === 'codex') return structuredWithCodex(call);
-	if (provider === 'agy') return structuredWithAgy(call);
 	if (provider === 'omlx') return structuredWithOmlx(call);
 	// 옛 기록의 requested_provider 같은 값이 타입 검사를 우회해 올 수 있다
 	return Promise.reject(new Error(`사용할 수 없는 LLM 입니다: ${provider}`));
@@ -396,21 +140,8 @@ export function runStructured(provider: Provider, call: StructuredCall): Promise
 
 /** 텍스트만 주고받는 호출(사진·스키마 없음). 보고서 작성처럼 프롬프트 → 본문만 필요한 곳에서 쓴다. */
 export async function runText(provider: Provider, prompt: string): Promise<{ text: string; model: string }> {
+	if (provider !== 'omlx') throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
 	const s = settings();
-	if (provider === 'zai') {
-		if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우거나 ZAI_API_KEY 환경변수를 설정하세요');
-		const text = await chatCompletion({
-			label: 'z.ai',
-			baseUrl: s.zaiBaseUrl,
-			apiKey: s.zaiApiKey,
-			model: s.zaiModel,
-			messages: [{ role: 'user', content: prompt }],
-			jsonMode: false,
-			extraBody: zaiExtraBody(s.zaiModel),
-			timeoutMs: s.analyzeTimeoutMs
-		});
-		return { text: text.trim(), model: s.zaiModel };
-	}
 	if (provider === 'omlx') {
 		if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
 		if (!s.omlxBaseUrl || !s.omlxModel)
@@ -427,38 +158,5 @@ export async function runText(provider: Provider, prompt: string): Promise<{ tex
 		});
 		return { text: text.trim(), model: omlxModel };
 	}
-	if (provider === 'agy') {
-		// 도구를 쓰려다 헤드리스 권한 거부로 응답이 비는 것을 막기 위해 본문만 답하게 한다
-		const r = await exec(
-			s.agyBin,
-			['-p', `도구를 사용하지 말고 아래 요청에 대한 본문만 바로 답하라.\n\n${prompt}`, '--model', s.agyModel, '--output-format', 'json'],
-			{ timeoutMs: s.analyzeTimeoutMs }
-		);
-		if (r.timedOut) throw new Error(`시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-		if (r.code !== 0 && !r.stdout.trim()) throw new Error(`agy 종료 코드 ${r.code}: ${r.stderr.trim().slice(-300)}`);
-		let env: any;
-		try {
-			env = JSON.parse(r.stdout);
-		} catch {
-			throw new Error(`agy 출력이 JSON 이 아님: ${r.stdout.slice(0, 200)}`);
-		}
-		if (env.status && env.status !== 'SUCCESS') throw new Error(`agy 오류(${env.status})`);
-		const text = String(env.response ?? '').trim();
-		if (!text) throw new Error('agy 응답이 비었음(도구 권한 거부 가능성)');
-		return { text, model: s.agyModel };
-	}
-	const dir = mkdtempSync(join(tmpdir(), 'ymath-codex-'));
-	const outPath = join(dir, 'out.txt');
-	try {
-		const r = await exec(
-			s.codexBin,
-			['exec', '-m', s.codexModel, '--ephemeral', '--skip-git-repo-check', '-s', 'read-only', '-C', dir, '-o', outPath],
-			{ cwd: dir, input: prompt, timeoutMs: s.analyzeTimeoutMs }
-		);
-		if (r.timedOut) throw new Error(`시간 초과(${Math.round(s.analyzeTimeoutMs / 1000)}초)`);
-		if (r.code !== 0) throw new Error(`codex 실패(code ${r.code}): ${codexErrorMessage(r.stderr)}`);
-		return { text: readFileSync(outPath, 'utf8').trim(), model: s.codexModel };
-	} finally {
-		rmSync(dir, { recursive: true, force: true });
-	}
+	throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
 }

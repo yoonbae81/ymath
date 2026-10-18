@@ -18,8 +18,7 @@ export interface QueueDeps {
 }
 
 /**
- * 프로세스 내 프로바이더별 레인 큐. 같은 LLM(예: 내부망 omlx GPU)끼리는 하나씩 직렬로 처리하고,
- * 서로 다른 프로바이더(omlx 대기 중에도 zai 등 외부 API)끼리는 병렬로 돈다. 상태는 record.json 에
+ * 프로세스 내 Qwen 단일 레인 큐. 과거 provider 요청도 같은 GPU에서 직렬 처리한다. 상태는 record.json 에
  * 있으므로 서버가 재시작돼도 recover() 로 이어간다. 상태: queued → ocr → analyzing → done | failed
  */
 export class JobQueue {

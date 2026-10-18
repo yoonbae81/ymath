@@ -68,4 +68,9 @@ describe('processImage', () => {
 	it('이미지가 아닌 입력은 예외', async () => {
 		await expect(processImage(Buffer.from('not an image'))).rejects.toThrow();
 	});
+
+	it('5천만 픽셀을 넘는 유효 이미지도 디코딩 전에 거절한다', async () => {
+		const oversized = await sharp({ create: { width: 10_001, height: 5_000, channels: 3, background: '#fff' } }).jpeg().toBuffer();
+		await expect(processImage(oversized)).rejects.toThrow(/pixel|limit|too large/i);
+	});
 });

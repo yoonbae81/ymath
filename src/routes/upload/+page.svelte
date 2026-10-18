@@ -16,6 +16,7 @@
 	let message = $state<{ kind: 'ok' | 'bad'; text: string } | null>(null);
 	let camera: HTMLInputElement;
 	let album: HTMLInputElement;
+	let pendingUpload = $state<{ file: File; workbookId: string; workbookName: string; key: string } | null>(null);
 
 	const selected = $derived(data.workbooks.find((w) => w.id === selectedId) ?? null);
 
@@ -66,18 +67,24 @@
 		const file = input.files?.[0];
 		input.value = ''; // 같은 파일/같은 동작을 다시 해도 change 가 발생하도록
 		if (!file || !selected) return;
+		pendingUpload = { file, workbookId: selected.id, workbookName: selected.name, key: crypto.randomUUID() };
+		await sendUpload();
+	}
 
+	async function sendUpload() {
+		if (!pendingUpload) return;
 		uploading = true;
 		message = null;
 		try {
 			// 사진 원본 바이트를 그대로 보낸다(서버는 image/* 본문만 받는다). 커스텀 헤더는 다른 사이트의 위조 요청을 막는다.
-			const res = await fetch(`${base}/api/upload?workbookId=${encodeURIComponent(selected.id)}`, {
+			const res = await fetch(`${base}/api/upload?workbookId=${encodeURIComponent(pendingUpload.workbookId)}`, {
 				method: 'POST',
-				headers: { 'content-type': file.type || 'application/octet-stream', [AJAX_HEADER]: AJAX_VALUE },
-				body: file
+				headers: { 'content-type': pendingUpload.file.type || 'application/octet-stream', [AJAX_HEADER]: AJAX_VALUE, 'idempotency-key': pendingUpload.key },
+				body: pendingUpload.file
 			});
 			if (!res.ok) throw new Error(((await res.json().catch(() => null)) as { message?: string } | null)?.message ?? `업로드 실패(${res.status})`);
-			message = { kind: 'ok', text: `${selected.name} 접수했어요. 분석은 알아서 진행돼요.` };
+			message = { kind: 'ok', text: `${pendingUpload.workbookName} 접수했어요. 분석은 알아서 진행돼요.` };
+			pendingUpload = null;
 			await invalidate('app:recent');
 		} catch (err) {
 			message = { kind: 'bad', text: err instanceof Error ? err.message : '업로드에 실패했어요' };
@@ -117,6 +124,9 @@
 	<p class="msg" role="status">올리는 중…</p>
 {:else if message}
 	<p class="msg {message.kind}" role="status">{message.text}</p>
+	{#if message.kind === 'bad' && pendingUpload}
+		<button class="retry-upload" onclick={sendUpload}>같은 사진 다시 보내기</button>
+	{/if}
 {/if}
 
 {#if data.recent.length}

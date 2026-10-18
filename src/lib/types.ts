@@ -1,16 +1,17 @@
 /** 분석에 쓸 수 있는 LLM */
-export const PROVIDERS = ['zai', 'codex', 'agy', 'omlx'] as const;
+export const PROVIDERS = ['omlx'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)', omlx: 'Qwen3.6 35B-A3B' };
+export const PROVIDER_LABEL: Record<Provider, string> = { omlx: 'Qwen' };
 
-/** 삭제된 LLM(claude). 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
-const LEGACY_PROVIDER_LABEL: Record<string, string> = { claude: 'Claude' };
+/** 삭제된 LLM. 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
+const LEGACY_PROVIDER_LABEL: Record<string, string> = { claude: 'Claude', zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)' };
 
 /** 기록에 남은 provider 값을 화면 표시용 라벨로. 목록에서 빠진 옛 값도 깨지지 않게 그 값 자체로 보여 준다 */
 export const providerLabel = (provider: string | null | undefined): string =>
 	provider ? ((PROVIDER_LABEL as Record<string, string>)[provider] ?? LEGACY_PROVIDER_LABEL[provider] ?? provider) : '';
 
 export type Status = 'queued' | 'ocr' | 'analyzing' | 'done' | 'failed';
+export type Session = { role: 'family'; via: 'anonymous'; exp: null };
 
 export const ACTIVE_STATUSES: Status[] = ['queued', 'ocr', 'analyzing'];
 
@@ -100,7 +101,7 @@ export interface Feedback {
 	created_at: string;
 	analyzed_at: string;
 	prompt_version: string;
-	provider?: Provider;
+	provider?: string;
 	model: string;
 }
 
@@ -115,9 +116,9 @@ export interface ItemRecord {
 	image: string;
 	flags: RecordFlags;
 	analysis: Analysis | null;
-	/** 재분석 때 지정한 LLM. 없으면 서버 기본값(ANALYZE_PROVIDER)을 쓴다 */
-	requested_provider?: Provider;
-	meta: { provider?: Provider; model: string; prompt_version: string; analyzed_at: string } | null;
+	/** 과거 재분석 요청 provider도 읽기 위해 문자열로 보존. 새 실행은 Qwen만 사용 */
+	requested_provider?: string;
+	meta: { provider?: string; model: string; prompt_version: string; analyzed_at: string } | null;
 	/** 분석 결과에 대한 학생 반응. 재분석해도 지우지 않고, 같은 분석에 다시 답하면 덮어쓴다 */
 	feedback?: Feedback[];
 	/** 오답분석 화면을 마지막으로 연 시각. 가족이 상세를 열 때마다 덮어쓴다. 없으면 아직 확인하지 않은 것 */
@@ -129,7 +130,7 @@ export interface ItemRecord {
 /** 항목 폴더의 analysis-<provider>.json 에 프로바이더별로 남기는 분석 한 건. record.json 은 마지막 분석만 가진다 */
 export interface SavedAnalysis {
 	analysis: Analysis;
-	meta: { provider?: Provider; model: string; prompt_version: string; analyzed_at: string };
+	meta: { provider?: string; model: string; prompt_version: string; analyzed_at: string };
 	flags: RecordFlags;
 }
 

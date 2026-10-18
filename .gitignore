@@ -4,6 +4,7 @@ node_modules
 # 빌드 산출물
 /.build
 /.svelte-kit
+/.svelte-kit-node
 .output
 .vercel
 .netlify

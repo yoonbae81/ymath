@@ -22,7 +22,7 @@ afterEach(() => {
 
 const okDeps = (over: Partial<QueueDeps> = {}): QueueDeps => ({
 	ocr: async () => '$x^2$',
-	analyze: async () => ({ analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] }),
+	analyze: async () => ({ analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] }),
 	maxAttempts: 2,
 	...over
 });
@@ -40,7 +40,7 @@ describe('JobQueue', () => {
 				analyze: async ({ ocrText }) => {
 					seen.push(readRecord(item.id)!.status);
 					expect(ocrText).toBe('$x^2$');
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -51,7 +51,7 @@ describe('JobQueue', () => {
 		const r = readRecord(item.id)!;
 		expect(r).toMatchObject({ status: 'done', error: null, attempts: 1 });
 		expect(r.analysis).toEqual(fakeAnalysis);
-		expect(r.meta).toMatchObject({ provider: 'zai', model: 'glm-5.3', prompt_version: 'abc12345' });
+		expect(r.meta).toMatchObject({ provider: 'omlx', model: 'Qwen-fixture', prompt_version: 'abc12345' });
 		expect(r.flags).toEqual({ ocr_missing: false, taxonomy_mismatch: [], guardrail: [] });
 		expect(readFileSync(join(itemDir(item.id), 'ocr.md'), 'utf8')).toBe('$x^2$');
 	});
@@ -66,7 +66,7 @@ describe('JobQueue', () => {
 				},
 				analyze: async ({ ocrText }) => {
 					gotOcr = ocrText;
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -85,7 +85,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async () => {
 					if (++calls === 1) throw new Error('일시 오류');
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -103,7 +103,7 @@ describe('JobQueue', () => {
 				analyze: async ({ hint }) => {
 					hints.push(hint);
 					if (hints.length === 1) throw new Error('정답 노출 가드레일 위반: 넛지 Q1에 등식이 있음');
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: ['질문 형태가 아님'] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: ['질문 형태가 아님'] };
 				}
 			})
 		);
@@ -165,8 +165,8 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async () => ({
 					analysis: fakeAnalysis,
-					provider: 'zai',
-					model: 'glm-5.3',
+					provider: 'omlx',
+					model: 'Qwen-fixture',
 					promptVersion: 'p',
 					taxonomyIssues: ["단원 'X'은 '기하' 영역인데 topic이 '대수'"],
 					guardrailWarnings: []
@@ -193,7 +193,7 @@ describe('JobQueue', () => {
 				},
 				analyze: async ({ ocrText }) => {
 					gotOcr = ocrText;
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -217,7 +217,7 @@ describe('JobQueue', () => {
 					order.push(record.id);
 					await new Promise((r) => setTimeout(r, 20));
 					active--;
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -233,10 +233,10 @@ describe('JobQueue', () => {
 		const a = createItem(WB, new Date(2026, 8, 19, 10, 0, 0));
 		const b = createItem(WB, new Date(2026, 8, 19, 10, 0, 1));
 		updateRecord(a.id, (r) => {
-			r.requested_provider = 'zai';
+			r.requested_provider = 'omlx';
 		});
 		updateRecord(b.id, (r) => {
-			r.requested_provider = 'zai';
+			r.requested_provider = 'omlx';
 		});
 		let active = 0;
 		let maxActive = 0;
@@ -247,7 +247,7 @@ describe('JobQueue', () => {
 					maxActive = Math.max(maxActive, active);
 					await new Promise((r) => setTimeout(r, 20));
 					active--;
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -257,45 +257,7 @@ describe('JobQueue', () => {
 		expect(maxActive).toBe(1);
 	});
 
-	it('omlx 분석이 막혀 있어도 다른 프로바이더 항목은 병렬로 처리한다', async () => {
-		const a = createItem(WB, new Date(2026, 8, 19, 10, 0, 0));
-		const b = createItem(WB, new Date(2026, 8, 19, 10, 0, 1));
-		updateRecord(b.id, (r) => {
-			r.requested_provider = 'zai';
-		});
-		let release!: () => void;
-		const gate = new Promise<void>((res) => (release = res));
-		let active = 0;
-		let maxActive = 0;
-		let zaiFinished = false;
-		const q = new JobQueue(
-			okDeps({
-				analyze: async ({ record }) => {
-					active++;
-					maxActive = Math.max(maxActive, active);
-					if (record.requested_provider === 'zai') zaiFinished = true;
-					else await gate;
-					active--;
-					return {
-						analysis: fakeAnalysis,
-						provider: record.requested_provider ?? 'omlx',
-						model: 'm',
-						promptVersion: 'p',
-						taxonomyIssues: [],
-						guardrailWarnings: []
-					};
-				}
-			})
-		);
-		q.enqueue(a.id);
-		q.enqueue(b.id);
-		await new Promise((r) => setTimeout(r, 30));
-		expect(zaiFinished).toBe(true); // omlx(a) 가 게이트로 막혀 있어도 zai(b) 는 끝난다
-		expect(maxActive).toBe(2);
-		release();
-		await q.idle();
-		expect(readRecord(a.id)!.status).toBe('done');
-	});
+
 
 	it('분석이 끝나면 analysis-<provider>.json 에 결과를 남긴다', async () => {
 		const item = createItem(WB);
@@ -303,10 +265,10 @@ describe('JobQueue', () => {
 		q.enqueue(item.id);
 		await q.idle();
 
-		expect(readdirSync(itemDir(item.id))).toContain('analysis-zai.json');
-		const saved = JSON.parse(readFileSync(join(itemDir(item.id), 'analysis-zai.json'), 'utf8'));
+		expect(readdirSync(itemDir(item.id))).toContain('analysis-omlx.json');
+		const saved = JSON.parse(readFileSync(join(itemDir(item.id), 'analysis-omlx.json'), 'utf8'));
 		expect(saved.analysis).toEqual(fakeAnalysis);
-		expect(saved.meta).toMatchObject({ provider: 'zai', model: 'glm-5.3' });
+		expect(saved.meta).toMatchObject({ provider: 'omlx', model: 'Qwen-fixture' });
 		expect(listAnalyses(item.id)).toHaveLength(1);
 	});
 
@@ -325,7 +287,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async ({ record }) => {
 					order.push(record.id);
-					return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -356,7 +318,7 @@ describe('JobQueue', () => {
 			analyze: async () => {
 				calls++;
 				if (calls === 1) throw new QuotaExceededError('rate limit 429', 429);
-				return { analysis: fakeAnalysis, provider: 'zai', model: 'glm-5.3', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+				return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 			},
 			maxAttempts: 2
 		});

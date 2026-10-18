@@ -1,0 +1,26 @@
+name = "math"
+main = ".svelte-kit/cloudflare/_worker.js"
+compatibility_date = "2026-10-17"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+routes = [
+	{ pattern = "xcv.kr/math*", zone_name = "xcv.kr" }
+]
+
+[vars]
+LLM_BASE_URL = "https://llm.xcv.kr/v1"
+LLM_MODEL = "Qwen3.6-35B-A3B"
+
+[assets]
+directory = ".svelte-kit/cloudflare"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "math"
+database_id = "ba4ef0c4-a697-49e0-a52a-1a321ce239a6"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "OBJECTS"
+bucket_name = "math-private"

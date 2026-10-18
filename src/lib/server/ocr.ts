@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLlmProviders, settings } from './config';
 import { IMAGE_FILE } from './image';
+import { buildOcrMessages, markdownFromOcrResponse } from './ocr-core';
+
+export { cleanOcrMarkdown } from './ocr-core';
 
 /**
  * providers.json 의 omlx OpenAI 호환 API로 image.jpg 를 Markdown 으로 바꾼다.
@@ -28,23 +31,7 @@ export async function runOcr(dir: string): Promise<string> {
 			},
 			body: JSON.stringify({
 				model: s.ocrModel,
-				messages: [
-					{
-						role: 'system',
-						content:
-							'당신은 수학 문제 이미지 OCR 도구입니다. 이미지에 보이는 모든 텍스트와 수식을 원문 순서대로 정확히 판독해 Markdown으로 전사하세요. 문제를 풀거나 설명하지 말고 전사 결과만 출력하세요.'
-					},
-					{
-						role: 'user',
-						content: [
-							{ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${image}` } },
-							{
-								type: 'text',
-								text: '이미지의 모든 텍스트와 수식을 원문 순서대로 정확히 판독해 Markdown 본문만 출력하세요. 설명·요약·코드 펜스는 추가하지 마세요.'
-							}
-						]
-					}
-				],
+				messages: buildOcrMessages(image),
 				max_tokens: 8192,
 				temperature: 0,
 				stream: false
@@ -61,20 +48,6 @@ export async function runOcr(dir: string): Promise<string> {
 		const body = await res.text().catch(() => '');
 		throw new Error(`OCR 실패(HTTP ${res.status}): ${body.trim().slice(0, 200)}`);
 	}
-	const data = (await res.json().catch(() => null)) as
-		| { choices?: { message?: { content?: unknown } }[] }
-		| null;
-	const content = data?.choices?.[0]?.message?.content;
-	const markdown =
-		typeof content === 'string'
-			? content
-			: Array.isArray(content)
-				? content
-						.map((part) => (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : ''))
-						.join('')
-				: undefined;
-	if (typeof markdown !== 'string') throw new Error('OCR 응답에 markdown 이 없음');
-	const md = markdown.replace(/[ \t]*<\| *LOC_\d+ *\|>[ \t]*/g, '').trim();
-	if (!md) throw new Error('OCR 결과가 비어 있음');
-	return md;
+	const data = (await res.json().catch(() => null)) as unknown;
+	return markdownFromOcrResponse(data);
 }

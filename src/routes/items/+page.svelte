@@ -14,15 +14,12 @@
 		FEEDBACK_CHOICES,
 		FEEDBACK_COMMENT_MAX,
 		FEEDBACK_LABEL,
-		PROVIDERS,
-		PROVIDER_LABEL,
 		currentFeedback,
 		getAvailablePeriods,
 		isItemInPeriod,
 		providerLabel,
 		type FeedbackChoice,
 		type ItemRecord,
-		type Provider,
 		type SavedAnalysis
 	} from '$lib/types';
 
@@ -40,12 +37,10 @@
 	let busy = $state(false);
 	let actionError = $state<string | null>(null);
 	// 재분석에 쓸 LLM. 고르기 전에는 이 항목의 마지막 선택(없으면 서버 기본값)을 보여 준다
-	let providerChoice = $state<Provider | null>(null);
-	const chosenProvider = (i: ItemRecord): Provider => providerChoice ?? i.requested_provider ?? data.defaultProvider;
 
 	// 공유 링크로 들어온 방문자는 보기만 한다(원본 사진은 서버 설정에 따라 숨김)
-	const readonly = $derived(page.data.session?.role === 'guest');
-	const showPhotos = $derived(!readonly || page.data.guestPhotos);
+	const readonly = false;
+	const showPhotos = true;
 
 	const openId = $derived(page.url.searchParams.get('id'));
 	const open = $derived(data.items.find((i) => i.id === openId) ?? null);
@@ -156,7 +151,6 @@
 
 	function show(id: string | null) {
 		actionError = null;
-		providerChoice = null;
 		fbChoice = null;
 		fbComment = '';
 		fbEditing = false;
@@ -186,7 +180,7 @@
 		}
 	}
 
-	const retry = (i: ItemRecord) => call('POST', `${base}/api/items/${i.id}/retry?provider=${chosenProvider(i)}`);
+	const retry = (i: ItemRecord) => call('POST', `${base}/api/items/${i.id}/retry?provider=omlx`);
 	// 별은 눌리자마자 채워지게(터치 피드백) 서버 저장을 기다리지 않는다. 저장에 실패하면 되돌린다
 	async function toggleFavorite(i: ItemRecord) {
 		const target = !i.favorite;
@@ -524,9 +518,7 @@
 			{#if actionError}<p class="alert bad">{actionError}</p>{/if}
 			{#if !readonly}
 				<footer>
-					<select class="provider" aria-label="분석에 쓸 LLM" value={chosenProvider(open)} onchange={(e) => (providerChoice = e.currentTarget.value as Provider)}>
-						{#each PROVIDERS as p (p)}<option value={p}>{PROVIDER_LABEL[p]}</option>{/each}
-					</select>
+					<span class="provider">Qwen</span>
 					<button class="btn" disabled={busy || (open.status !== 'done' && open.status !== 'failed')} onclick={() => retry(open)}>🔄 다시 분석</button>
 					<button class="btn danger" disabled={busy || open.status === 'ocr' || open.status === 'analyzing'} onclick={() => remove(open)}>🗑 삭제</button>
 				</footer>

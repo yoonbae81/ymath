@@ -1,12 +1,9 @@
 import { error, json } from '@sveltejs/kit';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { loadWorkbooks } from '$lib/server/config';
 import { requireAjax, requireMutationRate } from '$lib/server/guard';
-import { processImage } from '$lib/server/image';
-import { getQueue } from '$lib/server/queue';
-import { createItem, itemDir } from '$lib/server/store';
 import type { RequestHandler } from './$types';
+import { acceptCloudItem, hasImageMagicBytes, readBoundedRequest, workbooksFromEnv } from '$lib/server/cloudflare/runtime';
+import { assertItemInngestConfigured, makeSliceApp } from '$lib/server/inngest-slice/app';
+import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
 /**
  * 사진을 바이너리 본문으로 받는다: `POST /api/upload?workbookId=<id>`, `Content-Type: image/*`.
@@ -15,8 +12,10 @@ import type { RequestHandler } from './$types';
  */
 const MAX_UPLOAD_SIZE = 25 * 1024 * 1024; // 25MB (OWASP ASVS V5.2.1)
 
-export const POST: RequestHandler = async ({ request, url, getClientAddress }) => {
+export const POST: RequestHandler = async ({ request, url, getClientAddress, platform }) => {
 	requireAjax(request);
+	const provider = url.searchParams.get('provider');
+	if (provider !== null && provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
 	// OWASP ASVS V2.4.1: 상태 변경 API 속도 제한(IP 당)
 	requireMutationRate(getClientAddress, request);
 	const type = request.headers.get('content-type') ?? '';
@@ -25,25 +24,45 @@ export const POST: RequestHandler = async ({ request, url, getClientAddress }) =
 
 	const workbookId = url.searchParams.get('workbookId');
 	if (!workbookId || typeof workbookId !== 'string') error(400, '문제집 ID 가 필요합니다');
-	const workbook = loadWorkbooks().find((w) => w.id === workbookId);
+	const workbookList = platform?.env?.DB ? workbooksFromEnv(platform.env.WORKBOOKS_JSON) : NODE_RUNTIME ? (await import('$lib/server/config')).loadWorkbooks() : error(503, '데이터베이스에 연결할 수 없습니다');
+	const workbook = workbookList.find((w) => w.id === workbookId);
 	if (!workbook) error(400, '알 수 없는 문제집입니다');
 
-	const body = Buffer.from(await request.arrayBuffer());
+	let bytes: Uint8Array;
+	try { bytes = await readBoundedRequest(request, MAX_UPLOAD_SIZE); }
+	catch (e) { if (e instanceof RangeError) error(413, '업로드 가능한 최대 파일 크기는 25MB 입니다'); error(400, '사진을 읽을 수 없습니다'); }
+	const body = bytes;
 	if (body.length === 0) error(400, '사진이 없습니다');
 	if (body.length > MAX_UPLOAD_SIZE) error(413, '업로드 가능한 최대 파일 크기는 25MB 입니다');
-
-	// 이미지 처리가 실패하면 항목을 만들기 전에 거절한다(빈 폴더가 남지 않도록)
-	let processed;
-	try {
-		processed = await processImage(body);
-	} catch {
-		error(400, '이미지를 읽을 수 없거나 지원되지 않는 형식입니다');
+	if (platform?.env?.DB) {
+		// The private raw object remains inaccessible to clients until it is validated and normalized (Node runner or Worker WASM path).
+		if (!hasImageMagicBytes(body)) error(400, '이미지를 읽을 수 없거나 지원되지 않는 형식입니다');
+		const key = request.headers.get('idempotency-key') ?? request.headers.get('x-idempotency-key') ?? '';
+		if (!key) error(400, '요청 중복 방지 키가 필요합니다');
+		try {
+			assertItemInngestConfigured(platform.env);
+			const accepted = await acceptCloudItem(platform.env, workbook, body, key);
+			if (platform.env.ITEM_ANALYSIS_BACKEND === 'inngest') {
+				try { await makeSliceApp(platform.env).publishItemOutbox(); }
+				catch (err) { console.error('[item outbox publish]', err); /* committed D1 outbox remains recoverable by the Inngest cron */ }
+			}
+			return json({ id: accepted.id, status: 'queued' }, { status: accepted.created ? 201 : 200 });
+		} catch (e) {
+			if (e instanceof Error && (e.message.includes('binding is required') || e.message.includes('configuration is missing') || e.message.includes('must be a valid HTTPS') || e.message.includes('format is invalid'))) error(503, '분석 실행 구성이 완료되지 않아 접수할 수 없습니다');
+			error(503, '사진을 저장하지 못했습니다. 다시 시도해 주세요');
+		}
 	}
-
-	const record = createItem(workbook);
-	const dir = itemDir(record.id);
-	writeFileSync(join(dir, record.image), processed);
-	getQueue().enqueue(record.id);
-
-	return json({ id: record.id, status: record.status }, { status: 201 });
+	if (NODE_RUNTIME) {
+		const { processImage } = await import('$lib/server/image');
+		let processed;
+		try { processed = await processImage(Buffer.from(body)); }
+		catch { error(400, '이미지를 읽을 수 없거나 지원되지 않는 형식입니다'); }
+		const { createItem, itemDir } = await import('$lib/server/store');
+		const record = createItem(workbook);
+		const dir = itemDir(record.id);
+		(await import('node:fs')).writeFileSync((await import('node:path')).join(dir, record.image), processed);
+		(await import('$lib/server/queue')).getQueue().enqueue(record.id);
+		return json({ id: record.id, status: record.status }, { status: 201 });
+	}
+	error(503, '데이터베이스에 연결할 수 없습니다');
 };

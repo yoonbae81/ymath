@@ -13,12 +13,15 @@
 	} from '$lib/types';
 
 	let { data } = $props();
+	let retainedData = $state.raw<typeof data | null>(null);
+	$effect(() => { if (!data.loadError) retainedData = data; });
+	const view = $derived(data.loadError ? retainedData ?? data : data);
 
 	let statusFilter = $state<string>('');
 	let typeFilter = $state<string>('');
 
-	const activeItems = $derived(hasActive(data.items));
-	const activeReports = $derived(data.reports.some((r) => ACTIVE_REPORT_STATUSES.includes(r.status)));
+	const activeItems = $derived(hasActive(view.items));
+	const activeReports = $derived(view.reports.some((r) => ACTIVE_REPORT_STATUSES.includes(r.status)));
 
 	// 진행 중인 작업이 있으면 2.5초마다 새로고침
 	$effect(() => {
@@ -46,7 +49,7 @@
 		  };
 
 	const allEntries = $derived<QueueEntry[]>([
-		...data.items.map((i): QueueEntry => ({
+		...view.items.map((i): QueueEntry => ({
 			type: 'item',
 			id: i.id,
 			time: i.created_at,
@@ -54,7 +57,7 @@
 			active: i.status === 'ocr' || i.status === 'analyzing',
 			item: i
 		})),
-		...data.reports.map((r): QueueEntry => ({
+		...view.reports.map((r): QueueEntry => ({
 			type: 'report',
 			id: r.id,
 			time: r.created_at,
@@ -92,22 +95,30 @@
 </div>
 
 <section class="panel">
+	{#if data.loadError}
+		<p class="alert bad" role="status">
+			{#if retainedData}저장소에 연결되지 않아 새 상태를 불러오지 못했어요. 마지막으로 불러온 목록을 유지하고 있습니다.{:else}저장소에 연결할 수 없어 상태를 불러오지 못했어요.{/if}
+			새로고침을 눌러 다시 시도해 주세요.
+		</p>
+	{:else if view.stats.queued > 0 && view.stats.processing === 0}
+		<p class="alert" role="status">작업이 실행기 대기 중이에요. 실행기가 연결되면 자동으로 처리합니다.</p>
+	{/if}
 	<div class="filter-section">
 		<div class="stats-row">
 			<button class="stat-pill" class:on={statusFilter === ''} onclick={() => (statusFilter = '')}>
-				전체 {data.stats.total}
+				전체 {view.stats.total}
 			</button>
 			<button class="stat-pill" class:on={statusFilter === 'queued'} onclick={() => (statusFilter = 'queued')}>
-				대기 {data.stats.queued}
+				대기 {view.stats.queued}
 			</button>
 			<button class="stat-pill accent" class:on={statusFilter === 'processing'} onclick={() => (statusFilter = 'processing')}>
-				진행 {data.stats.processing}
+				진행 {view.stats.processing}
 			</button>
 			<button class="stat-pill ok" class:on={statusFilter === 'done'} onclick={() => (statusFilter = 'done')}>
-				완료 {data.stats.done}
+				완료 {view.stats.done}
 			</button>
 			<button class="stat-pill bad" class:on={statusFilter === 'failed'} onclick={() => (statusFilter = 'failed')}>
-				실패 {data.stats.failed}
+				실패 {view.stats.failed}
 			</button>
 		</div>
 
@@ -116,10 +127,10 @@
 				전체 ({allEntries.length})
 			</button>
 			<button class="type-chip item" class:on={typeFilter === 'item'} onclick={() => (typeFilter = 'item')}>
-				문제 분석 ({data.stats.itemsTotal})
+				문제 분석 ({view.stats.itemsTotal})
 			</button>
 			<button class="type-chip report" class:on={typeFilter === 'report'} onclick={() => (typeFilter = 'report')}>
-				영역 보고서 ({data.stats.reportsTotal})
+				영역 보고서 ({view.stats.reportsTotal})
 			</button>
 		</div>
 	</div>

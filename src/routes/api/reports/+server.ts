@@ -1,14 +1,21 @@
 import { error, json } from '@sveltejs/kit';
 import { requireAjax, requireMutationRate } from '$lib/server/guard';
-import { getReportQueue, listReports } from '$lib/server/report';
+import { NODE_RUNTIME } from '$lib/server/runtime-target';
+import { cloudReports, createCloudReport } from '$lib/server/cloudflare/runtime';
+import { assertReportInngestConfigured, makeSliceApp } from '$lib/server/inngest-slice/app';
 import type { RequestHandler } from './$types';
 
-export const GET: RequestHandler = () => {
-	return json(listReports());
+export const GET: RequestHandler = async ({ platform }) => {
+	if (platform?.env?.DB) try { return json(await cloudReports(platform.env)); }
+	catch (err) { console.error('[reports storage error]', err); error(503, '보고서 저장소를 읽지 못했습니다'); }
+	if (NODE_RUNTIME) return json((await import('$lib/server/report')).listReports());
+	return json({ message: '데이터베이스에 연결할 수 없습니다' }, { status: 503 });
 };
 
-export const POST: RequestHandler = async ({ request, getClientAddress }) => {
+export const POST: RequestHandler = async ({ request, url, getClientAddress, platform }) => {
 	requireAjax(request);
+	const provider = url.searchParams.get('provider');
+	if (provider !== null && provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
 	// OWASP ASVS V2.4.1: 상태 변경 API 속도 제한(IP 당)
 	requireMutationRate(getClientAddress, request);
 	let body: Record<string, unknown>;
@@ -22,6 +29,7 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 		error(400, '잘못된 JSON 본문입니다');
 	}
 
+	if (body.provider !== undefined && body.provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
 	const rawTopic = typeof body.topic === 'string' ? body.topic.trim() : '';
 	if (!rawTopic) {
 		error(400, '보고서를 작성할 영역을 지정해 주세요');
@@ -51,12 +59,28 @@ export const POST: RequestHandler = async ({ request, getClientAddress }) => {
 	}
 
 	const force = Boolean(body.force);
+	if (platform?.env?.DB) {
+		try {
+			assertReportInngestConfigured(platform.env);
+			const result = await createCloudReport(platform.env, rawTopic, period, force);
+			if (!result.cached && platform.env.REPORT_BACKEND === 'inngest') {
+				try { await makeSliceApp(platform.env).publishReportOutbox(); }
+				catch (err) { console.error('[report outbox publish]', err); /* committed D1 outbox remains recoverable by the Inngest cron */ }
+			}
+			return json(result, { status: result.cached ? 200 : 202 });
+		} catch (err) {
+			if (err instanceof Error && err.message.includes('해당 기간')) error(422, err.message);
+			console.error('[reports error]', err);
+			error(503, '보고서 작업을 저장하지 못했습니다');
+		}
+	}
 
-	try {
-		const result = await getReportQueue().generateOrReuse({ topic: rawTopic, period, force });
+	if (!platform?.env?.DB && NODE_RUNTIME) try {
+		const result = await (await import('$lib/server/report')).getReportQueue().generateOrReuse({ topic: rawTopic, period, force });
 		return json(result, { status: 201 });
 	} catch (err) {
 		console.error('[reports error]', err);
 		error(500, '보고서 생성 중 오류가 발생했습니다');
 	}
+	error(503, '보고서 저장소에 연결할 수 없습니다');
 };

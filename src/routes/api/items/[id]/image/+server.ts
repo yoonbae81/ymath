@@ -1,14 +1,26 @@
 import { error } from '@sveltejs/kit';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { IMAGE_FILE } from '$lib/server/image';
-import { isValidId, itemDir } from '$lib/server/store';
 import type { RequestHandler } from './$types';
+import { cloudItem } from '$lib/server/cloudflare/runtime';
+import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
-export const GET: RequestHandler = ({ params }) => {
+const isValidId = (id: string) => /^\d{8}-\d{6}-[a-z0-9]{4}$/.test(id);
+export const GET: RequestHandler = async ({ params, platform }) => {
 	if (!isValidId(params.id)) error(404);
-	try {
-		const image = readFileSync(join(itemDir(params.id), IMAGE_FILE));
+	if (platform?.env?.DB) {
+		const record = await cloudItem(platform.env, params.id);
+		if (!record) error(404, '이미지를 찾을 수 없습니다');
+		const row = await platform.env.DB.prepare("SELECT image_key FROM entities WHERE id = ? AND kind = 'item' AND deleted_at IS NULL")
+			.bind(params.id).first<{ image_key: string | null }>();
+		if (!row?.image_key) error(404, '이미지를 아직 처리하고 있습니다');
+		const object = await platform.env.OBJECTS.get(row.image_key);
+		if (!object) error(503, '이미지 저장소에 연결할 수 없습니다');
+		return new Response(object.body, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' } });
+	}
+	if (NODE_RUNTIME) try {
+		const { readFileSync } = await import('node:fs');
+		const { join } = await import('node:path');
+		const { itemDir } = await import('$lib/server/store');
+		const image = readFileSync(join(itemDir(params.id), 'image.jpg'));
 		return new Response(image, {
 			headers: {
 				'content-type': 'image/jpeg',
@@ -19,4 +31,5 @@ export const GET: RequestHandler = ({ params }) => {
 	} catch {
 		error(404, '이미지를 찾을 수 없습니다');
 	}
+	error(503, '데이터베이스에 연결할 수 없습니다');
 };
