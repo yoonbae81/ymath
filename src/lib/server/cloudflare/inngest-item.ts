@@ -338,7 +338,8 @@ export function createItemAnalysisHandler(env: CloudflareEnv, options: ItemAnaly
 			const out = parseJsonBody('oMLX', validateOpenAiResponse(response));
 			validateAnalysis(schema, out);
 			const guard = checkGuardrail(out);
-			if (guard.violations.length) throw new Error(`정답 노출 가드레일 위반: ${guard.violations.join(' / ')}`);
+			// 사진에 정답이 있으면 분석에 답이 섞이는 것을 막을 수 없으므로 실패시키지 않는다.
+			// 위반은 flags.guardrail 경고로 기록해 화면에 표시한다.
 			return { out, guard };
 		};
 		let parsed: ReturnType<typeof parseResponse>;
@@ -398,7 +399,7 @@ export function createItemAnalysisHandler(env: CloudflareEnv, options: ItemAnaly
 			prompt_version: await promptVersionAsync(guideline, options.curriculumRaw),
 			analyzed_at: new Date().toISOString()
 		};
-		const flags = { ocr_missing: !ocrText.trim(), taxonomy_mismatch: issues, guardrail: guard.warnings };
+		const flags = { ocr_missing: !ocrText.trim(), taxonomy_mismatch: issues, guardrail: [...guard.violations, ...guard.warnings] };
 
 		// ④ 기존 저장 계약(commitCloudResult: analysis/ocr R2 + entities/jobs/analyses D1).
 		// 삭제로 엔티티가 사라졌으면 R2 읽기 전에 실패 확정한다(늦은 결과가 무엇도 덮지 않게).

@@ -35,7 +35,8 @@ export interface AnalyzeResult {
 	promptVersion: string;
 	/** 분류 체계와 어긋난 지점. 비어 있으면 정합 */
 	taxonomyIssues: string[];
-	/** 형식 경고(질문 형태 아님, 너무 김 등). 정답 노출은 여기 오지 않고 예외로 처리된다 */
+	/** 형식 경고(질문 형태 아님, 너무 김 등)와 정답 노출 의심 지적. 사진에 정답이 있으면
+	 * 분석에 답이 섞이는 것을 막을 수 없으므로 위반은 실패가 아니라 여기에 기록한다 */
 	guardrailWarnings: string[];
 }
 
@@ -75,9 +76,9 @@ export const analyzeItem: Analyzer = async ({ record, dir, ocrText, feedback, hi
 
 	const { output: out, model } = await runStructured(provider, { prompt, schema, dir, imagePath });
 	validateAnalysis(schema, out);
-	// 정답·식이 넛지에 섞였으면 저장하지 않고 실패시킨다(큐가 사유를 힌트로 넣어 재시도)
+	// 사진에 정답이 인쇄·기입돼 있으면 분석에 답이 섞이는 것을 막을 수 없다(운영 방침).
+	// 위반은 실패가 아니라 경고로 기록해 화면에 표시한다.
 	const guard = checkGuardrail(out);
-	if (guard.violations.length) throw new Error(`정답 노출 가드레일 위반: ${guard.violations.join(' / ')}`);
 	const issues = checkClassification(taxonomy, out);
 	const course = taxonomy.unitByName.get(out.classification.unit_major)?.course;
 	if (course) out.classification.course = course;
@@ -88,7 +89,7 @@ export const analyzeItem: Analyzer = async ({ record, dir, ocrText, feedback, hi
 		model,
 		promptVersion: promptVersion(guideline, curriculum),
 		taxonomyIssues: issues,
-		guardrailWarnings: guard.warnings
+		guardrailWarnings: [...guard.violations, ...guard.warnings]
 	};
 };
 
