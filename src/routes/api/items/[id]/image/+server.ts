@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { cloudItem } from '$lib/server/cloudflare/runtime';
+import { cloudItem, resolveS3 } from '$lib/server/cloudflare/runtime';
 import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
 const isValidId = (id: string) => /^\d{8}-\d{6}-[a-z0-9]{4}$/.test(id);
@@ -12,9 +12,9 @@ export const GET: RequestHandler = async ({ params, platform }) => {
 		const row = await platform.env.DB.prepare("SELECT image_key FROM entities WHERE id = ? AND kind = 'item' AND deleted_at IS NULL")
 			.bind(params.id).first<{ image_key: string | null }>();
 		if (!row?.image_key) error(404, '이미지를 아직 처리하고 있습니다');
-		const object = await platform.env.OBJECTS.get(row.image_key);
-		if (!object) error(503, '이미지 저장소에 연결할 수 없습니다');
-		return new Response(object.body, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' } });
+		const bytes = await resolveS3(platform.env).get(row.image_key);
+		if (!bytes) error(503, '이미지 저장소에 연결할 수 없습니다');
+		return new Response(bytes as BodyInit, { headers: { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' } });
 	}
 	if (NODE_RUNTIME) try {
 		const { readFileSync } = await import('node:fs');

@@ -46,7 +46,13 @@ export function compareManifests(a,b) {
 }
 
 async function writeNew(path,bytes) { await mkdir(dirname(path),{recursive:true}); await writeFile(path,bytes,{flag:'wx'}); }
-async function r2Bytes(env,key) { const object=await env.OBJECTS.get(key); if(!object) throw new Error('missing migration object'); return Buffer.from(await object.arrayBuffer()); }
+/** Local migration storage backend — the Node filesystem mirror (S3 is the live runtime store). */
+function migrationStore(env) {
+ if (env.S3) return { async get(key) { const b = await env.S3.get(key); if(!b) throw new Error('missing migration object'); return Buffer.from(b); }, async put(key, bytes) { await env.S3.put(key, new Uint8Array(bytes), 'application/octet-stream'); }, async del(key) { await env.S3.delete(key); } };
+ return { async get(key) { const object=await env.OBJECTS.get(key); if(!object) throw new Error('missing migration object'); return Buffer.from(await object.arrayBuffer()); }, async put(key, bytes) { await env.OBJECTS.put(key,bytes); }, async del(key) { await env.OBJECTS.delete(key); } };
+}
+let store;
+const r2Bytes=async(env,key)=>{ store ??= migrationStore(env); return store.get(key); };
 
 export async function initializeLocalDatabase(env) {
  const directory=new URL('../migrations/',import.meta.url);
@@ -76,7 +82,7 @@ export async function importLocalSnapshot(env,source,backup) {
    const bytes=await bytesAt(join(source,file.path));
    if(sha(bytes)!==file.sha256) throw new Error('snapshot changed during migration');
    const key=prefix+file.path; keys.set(file.path,key);
-   await env.OBJECTS.put(key,bytes);
+   store ??= migrationStore(env); await store.put(key,bytes);
    if(sha(await r2Bytes(env,key))!==file.sha256) throw new Error('target object verification failed');
    statements.push(env.DB.prepare('INSERT INTO migration_files(path,object_key,sha256,bytes) VALUES(?,?,?,?)').bind(file.path,key,file.sha256,file.bytes));
   }
@@ -98,7 +104,7 @@ export async function importLocalSnapshot(env,source,backup) {
   // All metadata is committed atomically; imported objects remain private until this succeeds.
   await env.DB.batch([...entities,...statements]);
   return manifest;
- } catch(error) { for(const key of keys.values()) await env.OBJECTS.delete(key); throw error; }
+ } catch(error) { store ??= migrationStore(env); for(const key of keys.values()) await store.del(key); throw error; }
 }
 
 /** Export current D1 metadata, not just original source bytes: includes post-cutover writes. */
@@ -151,7 +157,7 @@ if(process.argv[1] && import.meta.url===pathToFileURL(resolve(process.argv[1])).
   await mkdir(localState,{recursive:true});
   // Own configuration directory prevents loading repository credential/env files.
   const config=join(localState,`migration-${crypto.randomUUID()}.json`);
-  await writeFile(config,JSON.stringify({name:'ymath-local-migration',compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'ymath',database_id:'local-only'}],r2_buckets:[{binding:'OBJECTS',bucket_name:'ymath-private'}]}),{flag:'wx'});
+  await writeFile(config,JSON.stringify({name:'ymath-local-migration',compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'ymath',database_id:'local-only'}]}]),{flag:'wx'});
   const {getPlatformProxy}=await import('wrangler');
   const proxy=await getPlatformProxy({configPath:config,persist:{path:localState},remoteBindings:false,envFiles:[]});
   try {

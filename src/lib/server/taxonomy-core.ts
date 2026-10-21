@@ -75,7 +75,8 @@ export function renderTaxonomy(t: Taxonomy): string {
 	for (const topic of t.topics) {
 		out.push(`## 영역: ${topic}`);
 		for (const u of t.units.filter((u) => u.topic === topic)) {
-			out.push(`### 단원: ${u.name} (${u.course})`);
+			out.push(`### 단원: ${u.name}`);
+			out.push(`교육과정: ${u.course} — unit_major에는 단원명만 그대로 사용하고 교육과정은 붙이지 않는다.`);
 			for (const c of u.concepts) out.push(`- ${c.id}: ${c.desc}`);
 		}
 	}

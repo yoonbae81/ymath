@@ -8,8 +8,12 @@ routes = [
 ]
 
 [vars]
-LLM_BASE_URL = "https://llm.xcv.kr/v1"
-LLM_MODEL = "Qwen3.6-35B-A3B"
+ITEM_ANALYSIS_BACKEND = "baton"
+OMLX_BASE_URL = "https://llm.xcv.kr/v1"
+S3_ENDPOINT = "https://s3.xcv.kr"
+S3_BUCKET = "ymath"
+S3_REGION = "us-east-1"
+S3_ACCESS_KEY_ID = "ymath-analyst-Yo5pxm8Kw2vLq9Zn"
 WORKBOOKS_JSON = "{\"workbooks\":[{\"id\":\"blacklabel-m2-2\",\"name\":\"블랙라벨 중2-2\",\"publisher\":\"블랙라벨\",\"grade\":\"중2\",\"semester\":2},{\"id\":\"choisangwi-m2-2\",\"name\":\"최상위 중2-2\",\"publisher\":\"최상위\",\"grade\":\"중2\",\"semester\":2},{\"id\":\"school-exam\",\"name\":\"학교 시험\",\"publisher\":\"학교\",\"grade\":\"중2\",\"semester\":2},{\"id\":\"ssen-m3-1\",\"name\":\"쎈 중3-1\",\"publisher\":\"쎈\",\"grade\":\"중3\",\"semester\":1},{\"id\":\"ssen-m3-2\",\"name\":\"쎈 중3-2\",\"publisher\":\"쎈\",\"grade\":\"중3\",\"semester\":2},{\"id\":\"blacklabel-m3-1\",\"name\":\"블랙라벨 중3-1\",\"publisher\":\"블랙라벨\",\"grade\":\"중3\",\"semester\":1},{\"id\":\"blacklabel-m3-2\",\"name\":\"블랙라벨 중3-2\",\"publisher\":\"블랙라벨\",\"grade\":\"중3\",\"semester\":2},{\"id\":\"choisangwi-m3-1\",\"name\":\"최상위 중3-1\",\"publisher\":\"최상위\",\"grade\":\"중3\",\"semester\":1},{\"id\":\"choisangwi-m3-2\",\"name\":\"최상위 중3-2\",\"publisher\":\"최상위\",\"grade\":\"중3\",\"semester\":2},{\"id\":\"gnw-common1\",\"name\":\"개념원리 공통수학1\",\"publisher\":\"개념원리\",\"grade\":\"고1\",\"semester\":1},{\"id\":\"gnw-common2\",\"name\":\"개념원리 공통수학2\",\"publisher\":\"개념원리\",\"grade\":\"고1\",\"semester\":2},{\"id\":\"rpm-common1\",\"name\":\"RPM 공통수학1\",\"publisher\":\"RPM\",\"grade\":\"고1\",\"semester\":1},{\"id\":\"rpm-common2\",\"name\":\"RPM 공통수학2\",\"publisher\":\"RPM\",\"grade\":\"고1\",\"semester\":2},{\"id\":\"ssen-common1\",\"name\":\"쎈 공통수학1\",\"publisher\":\"쎈\",\"grade\":\"고1\",\"semester\":1},{\"id\":\"ssen-common2\",\"name\":\"쎈 공통수학2\",\"publisher\":\"쎈\",\"grade\":\"고1\",\"semester\":2},{\"id\":\"maple-common1\",\"name\":\"마플 공통수학1\",\"publisher\":\"마플\",\"grade\":\"고1\",\"semester\":1},{\"id\":\"maple-common2\",\"name\":\"마플 공통수학2\",\"publisher\":\"마플\",\"grade\":\"고1\",\"semester\":2}]}"
 
 [assets]
@@ -21,7 +25,3 @@ binding = "DB"
 database_name = "math"
 database_id = "ba4ef0c4-a697-49e0-a52a-1a321ce239a6"
 migrations_dir = "migrations"
-
-[[r2_buckets]]
-binding = "OBJECTS"
-bucket_name = "math"

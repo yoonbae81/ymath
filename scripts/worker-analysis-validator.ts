@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Ajv from 'ajv';
 import standaloneCode from 'ajv/dist/standalone/index.js';
 import type { Plugin } from 'vite';
@@ -8,11 +10,15 @@ import { buildAnalysisSchema, parseTaxonomy } from '../src/lib/server/taxonomy-c
  * error contract by compiling AJV during the build, never inside a request. */
 export function workerAnalysisValidator(): Plugin {
 	const id = '\0ymath:analysis-validator';
+	const validatorPath = fileURLToPath(new URL('../src/lib/server/analysis-validator.ts', import.meta.url));
 	return {
 		name: 'worker-analysis-validator',
 		enforce: 'pre',
 		resolveId(source, importer, options) {
-			if (process.env.BUILD_TARGET !== 'node' && process.env.VITEST !== 'true' && options.ssr && source === './analysis-validator' && importer?.endsWith('/analyze-prompt.ts')) return id;
+			// Match the validator module, not a single caller: Baton imports it directly.
+			if (process.env.BUILD_TARGET === 'node' || process.env.VITEST === 'true' || !options.ssr || !importer) return;
+			const target = resolve(dirname(importer), source);
+			if (target === validatorPath || `${target}.ts` === validatorPath) return id;
 		},
 		load(source) {
 			if (source !== id) return;

@@ -12,7 +12,7 @@ process.env.WRANGLER_LOG_PATH = join(scratch, 'wrangler-logs');
 const { mkdir } = await import('node:fs/promises');
 await mkdir(process.env.WRANGLER_LOG_PATH, { recursive: true });
 const reportTest = spawnSync(process.execPath, ['node_modules/vitest/vitest.mjs', '--run', 'src/lib/server/cloudflare/inngest-report.local.test.ts'], { stdio: 'inherit', env: { ...process.env, RUN_INNGEST_REPORT_LOCAL: '1', RUN_INNGEST_REPORT_FIXTURE: '' } });
-assert.equal(reportTest.status, 0, 'Real Wrangler D1/R2 application report integration must pass before the synthetic slice check');
+assert.equal(reportTest.status, 0, 'Real Wrangler D1 application report integration must pass before the synthetic slice check');
 const { getPlatformProxy } = await import('wrangler');
 const vite = await createServer({ configFile: resolve('vite.config.ts'), server: { middlewareMode: true, hmr: false }, appType: 'custom', logLevel: 'error' });
 const { makeSliceApp } = await vite.ssrLoadModule('/src/lib/server/inngest-slice/app.ts');

@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { requireAjax, requireMutationRate } from '$lib/server/guard';
 import type { RequestHandler } from './$types';
-import { cloudItem } from '$lib/server/cloudflare/runtime';
+import { cloudItem, resolveS3 } from '$lib/server/cloudflare/runtime';
 import { tombstoneEntity } from '$lib/server/cloudflare/repository';
 import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
@@ -29,7 +29,7 @@ export const DELETE: RequestHandler = async ({ params, request, getClientAddress
 		const results = await platform.env.DB.prepare('SELECT result_key FROM jobs WHERE entity_id=? AND result_key IS NOT NULL').bind(params.id).all<{ result_key: string }>();
 		if (!(await tombstoneEntity(platform.env.DB, params.id))) error(409, '항목이 이미 변경되었습니다');
 		const objects = new Set([keys?.image_key, keys?.raw_key, keys?.ocr_key, ...(analyses.results ?? []).map((row) => row.analysis_key), ...(results.results ?? []).map((row) => row.result_key)].filter((key): key is string => Boolean(key)));
-		await Promise.all([...objects].map((key) => platform.env.OBJECTS.delete(key).catch(() => undefined)));
+		await Promise.all([...objects].map((key) => resolveS3(platform.env).delete(key).catch(() => undefined)));
 		return new Response(null, { status: 204 });
 	}
 	if (NODE_RUNTIME) {

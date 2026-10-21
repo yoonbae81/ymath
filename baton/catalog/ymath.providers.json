@@ -1,0 +1,36 @@
+{
+  "providers": {
+    "omlx": {
+      "provider": "openai",
+      "base_url_env": "OMLX_BASE_URL",
+      "api_key_env": "OMLX_API_KEY"
+    },
+    "glm": {
+      "provider": "openai",
+      "base_url_env": "ZAI_BASE_URL",
+      "api_key_env": "ZAI_API_KEY"
+    },
+    "agy": {
+      "provider": "agy"
+    }
+  },
+  "profiles": {
+    "analysis": {
+      "provider": "omlx",
+      "model_env": "OMLX_MODEL",
+      "timeout": 900,
+      "fallbacks": []
+    },
+    "analysis-glm": {
+      "provider": "glm",
+      "model_env": "ZAI_MODEL",
+      "timeout": 900,
+      "fallbacks": []
+    },
+    "analysis-agy": {
+      "provider": "agy",
+      "model": "gemini-3.8-flash",
+      "timeout": 900
+    }
+  }
+}

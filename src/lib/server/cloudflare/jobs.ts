@@ -9,16 +9,25 @@ export interface D1Statement {
 export interface D1DatabaseLike { prepare(sql: string): D1Statement }
 export interface ClaimedJob { id: string; entity_id: string; kind: 'item' | 'report'; generation: number; entity_generation: number; lease_token: string; payload: string; provider?: string }
 
-/** ITEM_ANALYSIS_BACKEND 선택. REPORT_BACKEND 와 같은 패턴: unset 또는 'inngest' 외 값은 기존 runner 소유를 유지한다. */
-export function cloudItemBackend(env: { ITEM_ANALYSIS_BACKEND?: string }): 'runner' | 'inngest' {
-	return env.ITEM_ANALYSIS_BACKEND === 'inngest' ? 'inngest' : 'runner';
+/** ITEM_ANALYSIS_BACKEND 선택. REPORT_BACKEND 와 같은 패턴: unset 또는 'inngest'·'baton' 외 값은 기존 runner 소유를 유지한다.
+ * 'baton' 은 분석 추론만 baton 공통 Runner execute run 으로 위임한다(claim·OCR·커밋 계약은 기존 hosted function 유지). */
+export function cloudItemBackend(env: { ITEM_ANALYSIS_BACKEND?: string }): 'runner' | 'inngest' | 'baton' {
+	if (env.ITEM_ANALYSIS_BACKEND === 'inngest') return 'inngest';
+	if (env.ITEM_ANALYSIS_BACKEND === 'baton') return 'baton';
+	return 'runner';
+}
+
+/** inngest|baton 공통: item 접수→outbox→hosted function 파이프라인을 쓰는지. */
+export function hostedItemPipeline(env: { ITEM_ANALYSIS_BACKEND?: string }): boolean {
+	const backend = cloudItemBackend(env);
+	return backend === 'inngest' || backend === 'baton';
 }
 
 /** ITEM_ANALYSIS_BACKEND 와 REPORT_BACKEND 조합에서 runner 가 claim할 job kind.
- * 둘 다 inngest 면 runner가 남길 작업이 없음을 null 로 알린다(이중실행 방지). */
+ * 둘 다 hosted(inngest·baton) 면 runner가 남길 작업이 없음을 null 로 알린다(이중실행 방지). */
 export function runnerClaimableKind(env: { REPORT_BACKEND?: string; ITEM_ANALYSIS_BACKEND?: string }): 'item' | 'report' | 'both' | null {
 	const ownsReports = env.REPORT_BACKEND !== 'inngest';
-	const ownsItems = env.ITEM_ANALYSIS_BACKEND !== 'inngest';
+	const ownsItems = !hostedItemPipeline(env);
 	if (ownsReports && ownsItems) return 'both';
 	if (ownsReports) return 'report';
 	if (ownsItems) return 'item';

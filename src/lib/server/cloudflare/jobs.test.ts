@@ -64,7 +64,7 @@ describe('durable jobs against real SQLite', () => {
 		const report = { schema_version: 1, id: '20260101-000000-rep-abcd', created_at: '2026-01-01T00:00:00.000Z', topic: '대수', period: '', period_label: '전체 기간', status: 'queued', error: null, attempts: 0, item_ids: [], items_fingerprint: '', summary: null, markdown: null, meta: null };
 		sql.prepare("INSERT INTO entities(id,kind,created_at,status,generation,report_json,updated_at) VALUES(?,'report',?,'queued',1,?,?)").run(report.id, report.created_at, JSON.stringify(report), report.created_at);
 		sql.prepare("INSERT INTO jobs(id,entity_id,kind,entity_generation,state,provider,payload,created_at,updated_at) VALUES('legacy-report-job',?,'report',1,'queued','omlx','{}',?,?)").run(report.id, report.created_at, report.created_at);
-		const env = { DB: db, REPORT_BACKEND: 'inngest', OBJECTS: {} } as unknown as CloudflareEnv;
+		const env = { DB: db, REPORT_BACKEND: 'inngest' } as unknown as CloudflareEnv;
 		expect(await claimCloudJob(env, 'legacy-runner')).toBeNull();
 		expect(sql.prepare("SELECT state FROM jobs WHERE id='legacy-report-job'").get()).toMatchObject({ state: 'queued' });
 	});

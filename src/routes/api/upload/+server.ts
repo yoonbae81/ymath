@@ -2,7 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import { requireAjax, requireMutationRate } from '$lib/server/guard';
 import type { RequestHandler } from './$types';
 import { acceptCloudItem, hasImageMagicBytes, readBoundedRequest, workbooksFromEnv } from '$lib/server/cloudflare/runtime';
-import { assertItemInngestConfigured, makeSliceApp } from '$lib/server/inngest-slice/app';
+import { assertItemBatonConfigured, publishItemOutboxDirect } from '$lib/server/cloudflare/item-publication';
 import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
 /**
@@ -40,12 +40,10 @@ export const POST: RequestHandler = async ({ request, url, getClientAddress, pla
 		const key = request.headers.get('idempotency-key') ?? request.headers.get('x-idempotency-key') ?? '';
 		if (!key) error(400, '요청 중복 방지 키가 필요합니다');
 		try {
-			assertItemInngestConfigured(platform.env);
+			assertItemBatonConfigured(platform.env);
 			const accepted = await acceptCloudItem(platform.env, workbook, body, key);
-			if (platform.env.ITEM_ANALYSIS_BACKEND === 'inngest') {
-				try { await makeSliceApp(platform.env).publishItemOutbox(); }
-				catch (err) { console.error('[item outbox publish]', err); /* committed D1 outbox remains recoverable by the Inngest cron */ }
-			}
+			try { await publishItemOutboxDirect(platform.env); }
+			catch (err) { console.error('[item outbox publish]', err); /* committed D1 outbox remains recoverable by the Connect recovery cron */ }
 			return json({ id: accepted.id, status: 'queued' }, { status: accepted.created ? 201 : 200 });
 		} catch (e) {
 			if (e instanceof Error && (e.message.includes('binding is required') || e.message.includes('configuration is missing') || e.message.includes('must be a valid HTTPS') || e.message.includes('format is invalid'))) error(503, '분석 실행 구성이 완료되지 않아 접수할 수 없습니다');

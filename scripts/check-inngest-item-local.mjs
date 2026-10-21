@@ -1,4 +1,4 @@
-// Real adapter-cloudflare -> Wrangler bundle -> workerd, local D1/R2 only.
+// Real adapter-cloudflare -> Wrangler bundle -> workerd, local D1 only (storage is S3 via S3_*).
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -14,10 +14,12 @@ assert.equal(result.status, 0, result.stdout + result.stderr);
 const signingKey = 'signkey-test-1234567890abcdef';
 const { signDataWithKey } = createRequire(import.meta.url)('../node_modules/inngest/helpers/net.js');
 const network = [];
-const mf = new Miniflare(convertV4MiniflareOptions({ cf:false, workers:[{ name:'item-local', modulesRoot:root, modules:[{type:'ESModule',path:join(root,'_worker.js')}, ...(await readdir(root)).filter(name=>name.endsWith('.wasm')).map(name=>({type:'CompiledWasm',path:join(root,name)}))], compatibilityDate:'2026-10-17', compatibilityFlags:['nodejs_compat'], d1Databases:['DB'], r2Buckets:['OBJECTS'], bindings:{INNGEST_EVENT_KEY:'synthetic-event-key',INNGEST_SIGNING_KEY:signingKey,LLM_API_KEY:'synthetic-provider-key',LLM_BASE_URL:'https://llm.example.test/v1',LLM_MODEL:'synthetic-model',ITEM_ANALYSIS_BACKEND:'inngest'}, outboundService:async request=>{network.push(request.url);throw new Error('External HTTP forbidden: '+request.url);} }] }));
+const mf = new Miniflare(convertV4MiniflareOptions({ cf:false, workers:[{ name:'item-local', modulesRoot:root, modules:[{type:'ESModule',path:join(root,'_worker.js')}, ...(await readdir(root)).filter(name=>name.endsWith('.wasm')).map(name=>({type:'CompiledWasm',path:join(root,name)}))], compatibilityDate:'2026-10-17', compatibilityFlags:['nodejs_compat'], d1Databases:['DB'], bindings:{S3_ENDPOINT:'https://s3.example.test',S3_BUCKET:'ymath',S3_REGION:'us-east-1',S3_ACCESS_KEY_ID:'synthetic-access',S3_SECRET_ACCESS_KEY:'synthetic-secret',INNGEST_EVENT_KEY:'synthetic-event-key',INNGEST_SIGNING_KEY:signingKey,LLM_API_KEY:'synthetic-provider-key',LLM_BASE_URL:'https://llm.example.test/v1',LLM_MODEL:'synthetic-model',ITEM_ANALYSIS_BACKEND:'inngest'}, outboundService:async request=>{const url=new URL(request.url);if(url.hostname==='s3.example.test'){network.push(request.url);const key=decodeURIComponent(url.pathname.replace(/^\/ymath\//,''));if(request.method==='PUT'){s3Objects.set(key,new Uint8Array(await request.arrayBuffer()));return new Response(null,{status:200});}if(request.method==='DELETE'){s3Objects.delete(key);return new Response(null,{status:204});}const v=s3Objects.get(key);if(!v)return new Response(null,{status:404});return new Response(v,{status:200});}throw new Error('External HTTP forbidden: '+request.url);} }] }));
 const evidence=[];
 try {
- const db=await mf.getD1Database('DB'), r2=await mf.getR2Bucket('OBJECTS');
+ const db=await mf.getD1Database('DB');
+ // In-memory S3 대체 — Worker 의 SigV4 fetch(s3.example.test)를 가로챈다.
+ const s3Objects=new Map();
  for(const name of ['0001_initial.sql','0003_item_ocr.sql','0007_item_outbox.sql']) {
   const sql=await readFile(new URL('../migrations/'+name,import.meta.url),'utf8');
   for(const statement of sql.replace(/--[^\n]*/g,'').split(';').map(s=>s.trim()).filter(Boolean)) await db.prepare(statement).run();
@@ -26,7 +28,7 @@ try {
  async function seed(id, ocrKey=null) {
   const now=new Date().toISOString(), key=`items/${id}/raw.jpg`;
   const record={schema_version:1,id,created_at:now,status:'queued',error:null,attempts:0,workbook:{id:'synthetic',name:'Synthetic',publisher:'TEST',grade:'중3',semester:2},image:'image.jpg',flags:{ocr_missing:false,taxonomy_mismatch:[],guardrail:[]},analysis:null,meta:null};
-  await r2.put(key,raw);
+  s3Objects.set(key,raw);
   await db.prepare("INSERT INTO entities(id,kind,created_at,status,generation,raw_key,record_json,ocr_key,updated_at) VALUES(?,'item',?,'queued',1,?,?,?,?)").bind(id,now,key,JSON.stringify(record),ocrKey,now).run();
   await db.prepare("INSERT INTO jobs(id,entity_id,kind,entity_generation,state,payload,created_at,updated_at) VALUES(?,?,'item',1,'queued','{}',?,?)").bind('job-'+id,id,now,now).run();
  }
@@ -66,17 +68,17 @@ try {
   }
   assert.equal(response.status,200,JSON.stringify(response));assert.equal(response.body.status,'done');
   const saved=await db.prepare('SELECT status,image_key,ocr_key,record_json FROM entities WHERE id=?').bind(id).first();
-  assert.equal(saved.status,'done');assert.ok(await r2.get(saved.image_key));
+  assert.equal(saved.status,'done');assert.ok(s3Objects.has(saved.image_key));
   const api=await mf.dispatchFetch(`https://math.test/math/api/items/${id}`);assert.equal(api.status,200);assert.equal((await api.json()).status,'done');
   evidence.push({id,gateways:gateways.length,operations:ops,status:saved.status,ocrKey:saved.ocr_key});
   return saved;
  }
  await seed('20261018-000001-test');const saved=await run('20261018-000001-test');
- assert.equal(await (await r2.get(saved.ocr_key)).text(),'SYNTHETIC-OCR-MARKER');
+ assert.equal(new TextDecoder().decode(s3Objects.get(saved.ocr_key)),'SYNTHETIC-OCR-MARKER');
  await seed('20261018-000002-test',saved.ocr_key);await run('20261018-000002-test');assert.equal(evidence.at(-1).gateways,1);
  await seed('20261018-000003-test');const missing=await run('20261018-000003-test','   ');assert.equal(JSON.parse(missing.record_json).flags.ocr_missing,true);
  await seed('20261018-000004-test');await run('20261018-000004-test','SYNTHETIC-OCR-MARKER',{...validAnalysis(),unexpected:true},true);
  assert.deepEqual(network,[]);
- await writeFile(join(root,'evidence.json'),JSON.stringify({status:'PASS',mode:'real workerd D1 R2; signed SDK; synthetic upstream only',evidence},null,2));
+ await writeFile(join(root,'evidence.json'),JSON.stringify({status:'PASS',mode:'real workerd D1 + in-memory S3 (SigV4 intercepted); signed SDK; synthetic upstream only',evidence},null,2));
  console.log(JSON.stringify({status:'PASS',root,evidence},null,2));
 } finally { await mf.dispose(); }

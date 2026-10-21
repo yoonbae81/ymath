@@ -7,7 +7,7 @@ import { getPlatformProxy } from 'wrangler';
 import sharp from 'sharp';
 import { manifestSnapshot,compareManifests,importLocalSnapshot,exportLocalSnapshot,initializeLocalDatabase } from './cloudflare-migrate.mjs';
 
-test('real local Wrangler D1/R2 preserves every source SHA and rollback includes post-cutover writes', async () => {
+test('real local Wrangler D1 + in-memory S3 preserves every source SHA and rollback includes post-cutover writes', async () => {
  const root=await mkdtemp(join(tmpdir(),'ymath-migrate-e2e-')); let proxy;
  try {
   const source=join(root,'source'),id='20261017-080000-abcd',reportId='20261017-080001-rep-abcd';
@@ -20,9 +20,15 @@ test('real local Wrangler D1/R2 preserves every source SHA and rollback includes
   await writeFile(join(source,'items',id,'analysis-codex.json'),JSON.stringify({analysis:record.analysis,meta,flags:record.flags}));
   await writeFile(join(source,'reports',`${reportId}.json`),JSON.stringify({schema_version:1,id:reportId,status:'done',created_at:record.created_at,item_ids:[id],markdown:'TEST ONLY report',meta:null}));
   const config=join(root,'wrangler.json');
-  await writeFile(config,JSON.stringify({name:'ymath-migration-fixture',compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'migration-fixture',database_id:'local-migration-fixture'}],r2_buckets:[{binding:'OBJECTS',bucket_name:'migration-fixture-private'}]}));
+  await writeFile(config,JSON.stringify({name:'ymath-migration-fixture',compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'migration-fixture',database_id:'local-migration-fixture'}],S3_ENDPOINT:'https://s3.example.test',S3_BUCKET:'ymath',S3_REGION:'us-east-1',S3_ACCESS_KEY_ID:'synthetic-access',S3_SECRET_ACCESS_KEY:'synthetic-secret'}));
   proxy=await getPlatformProxy({configPath:config,persist:{path:join(root,'state')},remoteBindings:false,envFiles:[]});
-  const env=proxy.env;
+  // In-memory S3 store wired through the migration helper's env.S3 contract.
+  const objects=new Map();
+  const env={...proxy.env,S3:{
+   async put(key,bytes){objects.set(key,new Uint8Array(bytes));},
+   async get(key){return objects.get(key)??null;},
+   async delete(key){objects.delete(key);}
+  }};
   await initializeLocalDatabase(env);
   const before=await manifestSnapshot(source);
   const imported=await importLocalSnapshot(env,source,join(root,'backup'));
@@ -36,11 +42,11 @@ test('real local Wrangler D1/R2 preserves every source SHA and rollback includes
   await env.DB.prepare('UPDATE entities SET favorite=1,viewed_at=? WHERE id=?').bind('2026-10-17T09:00:00Z',id).run();
   await env.DB.prepare('UPDATE feedback SET payload_json=? WHERE entity_id=?').bind(JSON.stringify({...record.feedback[0],choice:'learned'}),id).run();
   const currentOcr=Buffer.from('TEST-ONLY updated current OCR');
-  await env.OBJECTS.put(importedOcr.ocr_key,currentOcr);
+  await env.S3.put(importedOcr.ocr_key,currentOcr);
   await env.DB.prepare("UPDATE entities SET report_json=json_set(report_json,'$.markdown','post-cutover report') WHERE id=?").bind(reportId).run();
   const newId='20261017-090000-efgh',newImageKey=`postcutover/${newId}/image.jpg`;
   const imageBytes=await readFile(join(source,'items',id,'image.jpg'));
-  await env.OBJECTS.put(newImageKey,imageBytes);
+  await env.S3.put(newImageKey,new Uint8Array(imageBytes));
   const newRecord={...record,id:newId,feedback:[]};
   await env.DB.prepare("INSERT INTO entities(id,kind,created_at,status,record_json,image_key,updated_at) VALUES(?,'item',?,'done',?,?,?)").bind(newId,record.created_at,JSON.stringify(newRecord),newImageKey,record.created_at).run();
   const rollback=join(root,'rollback'); await exportLocalSnapshot(env,rollback);

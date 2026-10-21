@@ -1,24 +1,21 @@
 /** item 분석 Inngest 전환: D1 fencing·outbox·스냅샷·실행 핸들러.
- * 기존 저장 계약은 commitCloudResult(기존 runner와 동일 R2/D1 구조)를 재사용해 보존한다. */
+ * 기존 저장 계약은 commitCloudResult(기존 runner와 동일 S3/D1 구조)를 재사용해 보존한다. */
 import { StepError } from 'inngest';
 import type { ItemRecord } from '$lib/types';
 import { currentFeedback } from '$lib/types';
 import type { ClaimedJob, D1DatabaseLike } from './jobs';
-import { cloudItem, commitCloudResult, hasImageMagicBytes, persistCloudNormalizedImage, updateCloudJobStage, workbooksFromEnv, type CloudflareEnv } from './runtime';
+import { cloudItem, commitCloudResult, hasImageMagicBytes, persistCloudNormalizedImage, resolveS3, updateCloudJobStage, workbooksFromEnv, type CloudflareEnv } from './runtime';
 import { normalizeCloudImage } from './item-normalize';
-import { buildOcrMessages, markdownFromOcrResponse } from '../ocr-core';
-import { MATH_COACH_SYSTEM, imageUserMessage, isQuotaOrRateLimitError, parseJsonBody, promptWithSchema } from '../llm-core';
-import { buildPrompt, promptVersionAsync, validateAnalysis } from '../analyze-prompt';
-import { buildAnalysisSchema, checkClassification, parseTaxonomy } from '../taxonomy-core';
-import { renderPrompt } from '../prompt-template';
-import { checkGuardrail } from '../guardrail';
-import { openaiModel, toBase64, validateInferenceConfig, validateOpenAiResponse } from '../inngest-slice/inference';
+import { parseTaxonomy, buildAnalysisSchema } from '../taxonomy-core';
 
 import { cloudItemBackend } from './jobs';
+import { runBatonAnalysis } from './baton-analysis';
+import type { BatonTriggerPublisher } from './baton-analysis';
 
 export { cloudItemBackend };
 export const DEFAULT_OCR_MODEL = 'PaddleOCR-VL-1.6-mlx';
 export const ITEM_EVENT_NAME = 'ymath/item.requested';
+export const BATON_COMPLETION_EVENT = 'ymath/item.baton.completed';
 export const ITEM_FUNCTION_ID = 'item-analysis';
 /** 실행/재시도 전이마다 갱신하는 기본 lease. 429 대기는 별도로 대기 시간만큼 먼저 연장한다. */
 export const ITEM_LEASE_SECONDS = 30 * 60;
@@ -65,22 +62,9 @@ export async function loadInngestItemSnapshot(env: CloudflareEnv, job: ClaimedJo
 		GROUP BY id ORDER BY count DESC LIMIT 60`).all<{ id: string; count: number; example: string }>();
 	let ocrText: string | null = null;
 	if (entity.ocr_key) {
-		const object = await env.OBJECTS.get(entity.ocr_key);
-		if (object) {
-			const reader = object.body.getReader();
-			const decoder = new TextDecoder();
-			let size = 0;
-			let text = '';
-			let tooLarge = false;
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				size += value.byteLength;
-				if (size > 1_000_000) { tooLarge = true; await reader.cancel(); break; }
-				text += decoder.decode(value, { stream: true });
-			}
-			if (!tooLarge) ocrText = text + decoder.decode();
-		}
+		const bytes = await resolveS3(env).get(entity.ocr_key);
+		// OCR text is capped at 1,000,000 characters (legacy stream cap preserved).
+		if (bytes && bytes.byteLength <= 1_000_000) ocrText = new TextDecoder().decode(bytes);
 	}
 	return { record, knownPatterns: patterns.results ?? [], imageKey: entity.image_key || null, rawKey: entity.raw_key || null, ocrText };
 }
@@ -115,7 +99,7 @@ export async function markInngestItemFailed(env: CloudflareEnv, jobId: string, e
 			.bind(jobId, entityId, entityGeneration, fence.generation, fence.attempts, failureMarker, bounded).first());
 	if (ok) {
 		const raw = await env.DB.prepare('SELECT raw_key FROM entities WHERE id=? AND deleted_at IS NULL').bind(entityId).first<{ raw_key: string | null }>();
-		if (raw?.raw_key) await env.OBJECTS.delete(raw.raw_key).catch(() => undefined);
+		if (raw?.raw_key) await resolveS3(env).delete(raw.raw_key).catch(() => undefined);
 	}
 	return ok;
 }
@@ -125,7 +109,7 @@ export async function persistCloudOcr(env: CloudflareEnv, job: ClaimedJob, token
 	const key = `items/${job.entity_id}/ocr-${job.id}-${job.generation}.txt`;
 	const current = await env.DB.prepare("SELECT ocr_key FROM entities WHERE id=? AND kind='item' AND deleted_at IS NULL").bind(job.entity_id).first<{ ocr_key: string | null }>();
 	if (current?.ocr_key === key) return true;
-	await env.OBJECTS.put(key, new TextEncoder().encode(ocrText), { httpMetadata: { contentType: 'text/plain; charset=utf-8' } });
+	await resolveS3(env).put(key, new TextEncoder().encode(ocrText), 'text/plain; charset=utf-8');
 	const saved = await env.DB.prepare(`UPDATE entities SET ocr_key=?, updated_at=? WHERE id=? AND kind='item' AND deleted_at IS NULL
 		AND generation=? AND (ocr_key IS NULL OR ocr_key='') AND EXISTS
 		(SELECT 1 FROM jobs WHERE id=? AND entity_id=entities.id AND state='leased' AND generation=? AND lease_token=? AND lease_until > ?)`)
@@ -133,13 +117,13 @@ export async function persistCloudOcr(env: CloudflareEnv, job: ClaimedJob, token
 	if ((saved.meta?.changes ?? 0) === 1) return true;
 	const after = await env.DB.prepare("SELECT ocr_key FROM entities WHERE id=? AND kind='item' AND deleted_at IS NULL").bind(job.entity_id).first<{ ocr_key: string | null }>();
 	if (after?.ocr_key === key) return true;
-	await env.OBJECTS.delete(key).catch(() => undefined);
+	await resolveS3(env).delete(key).catch(() => undefined);
 	return false;
 }
 
 /** Durable item-outbox publication with stable event IDs (report_outbox 와 같은 계약). */
-interface LeasedOutbox { entity_id: string; generation: number; job_id: string; lease_token: string }
-export type ItemOutboxPublisher = (event: { name: typeof ITEM_EVENT_NAME; id: string; data: { jobId: string; entityId: string; entityGeneration: number } }) => Promise<unknown>;
+interface LeasedOutbox { entity_id: string; generation: number; job_id: string; lease_token: string; provider: string | null }
+export type ItemOutboxPublisher = (event: { name: typeof ITEM_EVENT_NAME; id: string; data: { jobId: string; entityId: string; entityGeneration: number; requestedProvider?: string } }) => Promise<unknown>;
 
 export async function publishPendingItemOutbox(db: D1DatabaseLike, send: ItemOutboxPublisher, now = new Date().toISOString(), limit = 20, leaseSeconds = 55) {
 	let sent = 0;
@@ -153,10 +137,10 @@ export async function publishPendingItemOutbox(db: D1DatabaseLike, send: ItemOut
 				AND (o.state='pending' OR (o.state='publishing' AND o.lease_until<=?))
 				ORDER BY o.created_at,o.entity_id LIMIT 1)
 			AND (state='pending' OR (state='publishing' AND lease_until<=?))
-			RETURNING entity_id,generation,job_id,lease_token`)
+			RETURNING entity_id,generation,job_id,lease_token,(SELECT provider FROM jobs WHERE id=job_id LIMIT 1) AS provider`)
 			.bind(token, now, leaseSeconds, now, now, now).first<LeasedOutbox>();
 		if (!row) break;
-		const event = { name: ITEM_EVENT_NAME, id: `item-${row.entity_id}-${row.generation}`, data: { jobId: row.job_id, entityId: row.entity_id, entityGeneration: row.generation } } as const;
+		const event = { name: ITEM_EVENT_NAME, id: `item-${row.entity_id}-${row.generation}`, data: { jobId: row.job_id, entityId: row.entity_id, entityGeneration: row.generation, requestedProvider: row.provider ?? undefined } } as const;
 		try {
 			await send(event);
 			await db.prepare(`UPDATE item_outbox SET state='sent',lease_token=NULL,lease_until=NULL,last_error=NULL,updated_at=?
@@ -175,10 +159,10 @@ export async function publishPendingItemOutbox(db: D1DatabaseLike, send: ItemOut
 	return { sent, failed };
 }
 
-async function readObjectBytes(env: CloudflareEnv, key: string): Promise<Uint8Array> {
-	const object = await env.OBJECTS.get(key);
-	if (!object) throw new Error(`R2 object missing: ${key}`);
-	return new Uint8Array(await new Response(object.body).arrayBuffer());
+export async function readObjectBytes(env: CloudflareEnv, key: string): Promise<Uint8Array> {
+	const bytes = await resolveS3(env).get(key);
+	if (!bytes) throw new Error(`S3 object missing: ${key}`);
+	return bytes;
 }
 
 export interface ItemAnalysisOptions {
@@ -186,6 +170,10 @@ export interface ItemAnalysisOptions {
 	guidelineRaw: string;
 	/** user/prompts/curriculum.md 원문(빌드 타임 ?raw import). */
 	curriculumRaw: string;
+	/** ITEM_ANALYSIS_BACKEND=baton 때 baton 트리거 이벤트 발행기(app.ts 가 client.send 로 주입). */
+	batonSend?: BatonTriggerPublisher;
+	/** baton 모델 요청에 넣을 학생 이름(env.STUDENT_NAME 와 같은 계약). */
+	studentName?: string;
 }
 
 /** queue.ts defaults, not SDK attempt counts. Worker bindings mirror the Node settings. */
@@ -194,7 +182,7 @@ type ItemRetryEnv = CloudflareEnv & { ANALYZE_MAX_ATTEMPTS?: string; QUOTA_RETRY
 /** Keep the sleeping run as the sole owner. Extend BEFORE sleep and renew on wake;
  * never resurrect an expired/stolen/deleted generation. The transition marker makes
  * a committed-but-response-lost step replay safe (no double refund/increment). */
-async function transitionItemRetry(env: CloudflareEnv, job: ClaimedJob, owner: string, transition: string,
+export async function transitionItemRetry(env: CloudflareEnv, job: ClaimedJob, owner: string, transition: string,
 	expectedAttempts: number, attempts: number, status: 'queued' | 'analyzing', message: string | null, waitMs = 0) {
 	const now = new Date().toISOString();
 	const leaseSeconds = ITEM_LEASE_SECONDS + Math.ceil(waitMs / 1000);
@@ -233,6 +221,7 @@ export function createItemAnalysisHandler(env: CloudflareEnv, options: ItemAnaly
 		step: {
 			run<T>(id: string, callback: () => T | Promise<T>): Promise<T>;
 			sleep(id: string, duration: number): Promise<unknown>;
+			waitForEvent(id: string, options: { event: string; timeout: string; if?: string }): Promise<unknown>;
 			ai: { infer(id: string, options: { model: unknown; body: Record<string, unknown>; timeout?: string }): Promise<unknown> };
 		};
 		runId: string;
@@ -245,13 +234,11 @@ export function createItemAnalysisHandler(env: CloudflareEnv, options: ItemAnaly
 		}
 		const claimed = await step.run('claim-item-job', () => claimInngestItem(env.DB, jobId, entityId, entityGeneration, runId));
 		if (!claimed) return { status: 'duplicate_or_stale_generation' };
-		// runner와 같은 API-visible 상태/attempts 계약. 오래된 실행은 추론 전에 중단한다.
 		const ocrStage = await step.run('mark-item-ocr', () => updateCloudJobStage(env, claimed, claimed.lease_token, 'ocr'));
 		if (!ocrStage) return { status: 'stale_result_rejected' };
 		const snapshot = await step.run('load-item-snapshot', () => loadInngestItemSnapshot(env, claimed));
 		if (!snapshot) return { status: 'entity_unavailable' };
 
-		// ① R2 raw → CF 정규화(재시도 때는 image_key 로 저장된 정규화 결과를 재사용)
 		const normalized = await step.run('normalize-item-image', async () => {
 			if (snapshot.imageKey) return { imageKey: snapshot.imageKey, reused: true };
 			if (!snapshot.rawKey) throw new Error('정규화할 원본 이미지가 없습니다');
@@ -262,153 +249,21 @@ export function createItemAnalysisHandler(env: CloudflareEnv, options: ItemAnaly
 			return { imageKey: `items/${entityId}/normalized-${entityGeneration}.jpg`, reused: false };
 		});
 
-		const config = validateInferenceConfig(env);
-		const ocrModel = openaiModel(validateInferenceConfig({ ...env, LLM_MODEL: env.OCR_MODEL?.trim() || DEFAULT_OCR_MODEL }));
-
-		// ② OCR: 기존 ocr.md/ocr_key 재사용, 없으면 infer(PaddleOCR-VL, base64 data URI 첨부).
-		// 기존 queue/runner와 동일하게 OCR 실패 시 빈 OCR로 계속한다(ocr_missing 폴백).
-		// 요청 본문 생성(R2 읽기 포함)은 step 안에서 메모이즈한다 — 재생마다 재실행돼 커밋 뒤 재생에서 깨지지 않게.
-		let ocrText = snapshot.ocrText ?? '';
-		let ocrMissing = false;
-		if (!ocrText.trim()) {
-			try {
-				const request = await step.run('build-ocr-request', async () => {
-					const jpeg = await readObjectBytes(env, normalized.imageKey);
-					if (!hasImageMagicBytes(jpeg)) throw new Error('normalized image is not readable');
-					return { imageBase64: toBase64(jpeg) };
-				});
-				const response = await step.ai.infer('infer-item-ocr', {
-					model: ocrModel,
-					timeout: '2m',
-					body: { messages: buildOcrMessages(request.imageBase64), max_tokens: 8192, temperature: 0, stream: false }
-				});
-				ocrText = markdownFromOcrResponse(response);
-				await step.run('persist-item-ocr', () => persistCloudOcr(env, claimed, claimed.lease_token, ocrText));
-			} catch {
-				ocrMissing = true;
-				ocrText = '';
-			}
-		}
-
-		// ③ 분석: 기존 buildPrompt(OCR 텍스트 + 사진 첨부 지시) + 스키마 + guardrail + taxonomy 동일 계약
-		// OCR 실패 폴백/저장된 OCR 재사용도 동일하게 analyzing 으로 전환한다.
-		const analysisStage = await step.run('mark-item-analyzing', async () => {
-			if (!(await updateCloudJobStage(env, claimed, claimed.lease_token, 'analyzing'))) return false;
-			// Terminal onFailure must retain the same OCR-missing flag as the legacy queue.
-			// Persist before infer, since a gateway error never reaches commit-item-result.
-			const updated = await env.DB.prepare(`UPDATE entities SET record_json=json_set(record_json,'$.flags.ocr_missing',json(?))
-				WHERE id=? AND kind='item' AND deleted_at IS NULL AND generation=? AND EXISTS
-				(SELECT 1 FROM jobs WHERE id=? AND entity_id=entities.id AND entity_generation=entities.generation
-				AND state='leased' AND generation=? AND lease_token=? AND lease_until>?)`)
-				.bind(JSON.stringify(!ocrText.trim()), claimed.entity_id, claimed.entity_generation, claimed.id, claimed.generation, claimed.lease_token, new Date().toISOString()).run();
-			return (updated.meta?.changes ?? 0) === 1;
-		});
-		if (!analysisStage) return { status: 'stale_result_rejected' };
 		const taxonomy = parseTaxonomy(options.curriculumRaw);
 		const schema = buildAnalysisSchema(taxonomy);
-		const guideline = renderPrompt(options.guidelineRaw, env.STUDENT_NAME);
-		const prompt = (hint?: string) => buildPrompt({
-			hint,
-			guideline,
-			taxonomy,
-			patterns: snapshot.knownPatterns,
-			record: snapshot.record,
-			imagePath: 'image.jpg',
-			ocrText,
-			feedback: currentFeedback(snapshot.record) ?? undefined,
-			provider: 'omlx'
-		});
-		const analysisRequest = await step.run('build-analysis-request', async () => {
-			const jpeg = await readObjectBytes(env, normalized.imageKey);
-			return { imageBase64: toBase64(jpeg) };
-		});
-		const retryEnv = env as ItemRetryEnv;
-		const quotaDelayMs = Number(retryEnv.QUOTA_RETRY_DELAY_MS ?? 600_000);
-		let attempts = snapshot.record.attempts;
-		let budgetAttempt = 1;
-		const maxAttempts = Number(retryEnv.ANALYZE_MAX_ATTEMPTS ?? 2);
-		const parseResponse = (response: unknown) => {
-			// OpenAI-compatible endpoints can report quota errors in an HTTP 200 body.
-			const providerError = (response as { error?: unknown } | null)?.error;
-			if (providerError) {
-				const message = typeof providerError === 'string' ? providerError :
-					(providerError as { message?: string }).message || JSON.stringify(providerError);
-				throw new Error(message);
-			}
-			const out = parseJsonBody('oMLX', validateOpenAiResponse(response));
-			validateAnalysis(schema, out);
-			const guard = checkGuardrail(out);
-			// 사진에 정답이 있으면 분석에 답이 섞이는 것을 막을 수 없으므로 실패시키지 않는다.
-			// 위반은 flags.guardrail 경고로 기록해 화면에 표시한다.
-			return { out, guard };
-		};
-		let parsed: ReturnType<typeof parseResponse>;
-		let lastError: string | undefined;
-		for (let turn = 0; ; turn++) {
-			try {
-				const response = await step.ai.infer(turn === 0 ? 'infer-item-analysis' : `infer-item-analysis-${turn}`, {
-					model: openaiModel(config), timeout: retryEnv.ANALYZE_TIMEOUT_MS === undefined ? '15m' : `${Number(retryEnv.ANALYZE_TIMEOUT_MS)}ms`,
-					body: {
-						messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(analysisRequest.imageBase64, promptWithSchema(prompt(lastError), schema))],
-						response_format: { type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema } },
-						max_tokens: 16384, temperature: 0.2
-					}
-				});
-				parsed = parseResponse(response);
-				break;
-			} catch (error) {
-				// StepError retains the original provider message even though the SDK
-				// treats it as non-retriable. Never rely on the service retrying that ID.
-				if (!(isQuotaOrRateLimitError(error) || (error instanceof StepError && error.name === 'QuotaExceededError'))) {
-					// queue.ts retries ALL non-quota errors, not just timeouts, with no backoff.
-					if (budgetAttempt >= maxAttempts) {
-						const failed = await step.run(`fail-item-attempt-${turn}`, () => markInngestItemFailed(env,
-							jobId, entityId, entityGeneration, runId, error instanceof Error ? error.message : String(error),
-							undefined, { generation: claimed.generation, token: claimed.lease_token, attempts }));
-						return { status: failed ? 'failed' : 'stale_result_rejected' };
-					}
-					const retried = await step.run(`retry-item-attempt-${turn}`, () => transitionItemRetry(env, claimed, runId,
-						`retry-${turn}`, attempts, attempts + 1, 'analyzing', null));
-					if (!retried) return { status: 'stale_result_rejected' };
-					attempts++;
-					budgetAttempt++;
-					lastError = error instanceof Error ? error.message : String(error);
-					continue;
-				}
-				budgetAttempt = 1; // queue quota re-enqueue starts a fresh maxAttempts loop.
-				lastError = undefined;
-				const message = `API 할당량 초과 또는 요청 제한(429)으로 ${Math.round(quotaDelayMs / 60_000)}분 후 자동으로 다시 시도합니다.`;
-				const waiting = await step.run(`wait-item-quota-${turn}`, () => transitionItemRetry(env, claimed, runId,
-					`wait-${turn}`, attempts, Math.max(0, attempts - 1), 'queued', message, quotaDelayMs));
-				if (!waiting) return { status: 'stale_result_rejected' };
-				attempts = Math.max(0, attempts - 1);
-				await step.sleep(`sleep-item-quota-${turn}`, quotaDelayMs);
-				const resumed = await step.run(`resume-item-quota-${turn}`, () => transitionItemRetry(env, claimed, runId,
-					`resume-${turn}`, attempts, attempts + 1, 'analyzing', null));
-				if (!resumed) return { status: 'stale_result_rejected' };
-				attempts++;
-			}
-		}
-		const { out, guard } = parsed;
-		const issues = checkClassification(taxonomy, out);
-		const course = taxonomy.unitByName.get(out.classification.unit_major)?.course;
-		if (course) out.classification.course = course;
-		const meta = {
-			provider: 'omlx',
-			model: config.model,
-			prompt_version: await promptVersionAsync(guideline, options.curriculumRaw),
-			analyzed_at: new Date().toISOString()
-		};
-		const flags = { ocr_missing: !ocrText.trim(), taxonomy_mismatch: issues, guardrail: [...guard.violations, ...guard.warnings] };
+		const ocrText = snapshot.ocrText ?? '';
 
-		// ④ 기존 저장 계약(commitCloudResult: analysis/ocr R2 + entities/jobs/analyses D1).
-		// 삭제로 엔티티가 사라졌으면 R2 읽기 전에 실패 확정한다(늦은 결과가 무엇도 덮지 않게).
-		const saved = await step.run('commit-item-result', async () => {
-			if (!(await cloudItem(env, claimed.entity_id))) return false;
-			const jpeg = await readObjectBytes(env, normalized.imageKey);
-			return commitCloudResult(env, claimed, claimed.lease_token, jpeg, out, meta, flags, ocrText);
+		if (!options.batonSend) throw new Error('baton backend requires a trigger publisher (batonSend)');
+		return runBatonAnalysis(env, claimed, {
+			step, send: options.batonSend, runId,
+			jobId, entityId, entityGeneration,
+			imageKey: normalized.imageKey,
+			ocrText,
+			taxonomy, schema,
+			knownPatterns: snapshot.knownPatterns,
+			record: snapshot.record,
+			studentName: options.studentName
 		});
-		return { status: saved ? 'done' : 'stale_result_rejected' };
 	};
 }
 

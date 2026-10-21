@@ -134,8 +134,8 @@ describe('POST /api/items/[id]/retry', () => {
 		updateRecord(r.id, (x) => {
 			x.status = 'done';
 		});
-		await expect(withProvider('agy')).rejects.toMatchObject({ status: 400 });
-		expect(readRecord(r.id)!.requested_provider).toBe('omlx');
+		await expect(withProvider('agy')).resolves.toMatchObject({ status: 202 });
+		expect(readRecord(r.id)!.requested_provider).toBe('agy');
 	});
 
 	it('provider를 생략하면 과거 선택 대신 Qwen으로 재분석한다', async () => {

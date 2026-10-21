@@ -33,12 +33,12 @@ describe('Inngest application report generation fencing', () => {
 		sql.prepare("UPDATE entities SET status='done' WHERE id=?").run(id);
 		expect(await markInngestReportFailed(DB, id, 2, 'late terminal callback', undefined, 'run-A')).toBe(false);
 	});
-	it('propagates R2 storage failure for SDK retry and removes an unreferenced staged key', async () => {
+	it('propagates S3 storage failure for SDK retry and removes an unreferenced staged key', async () => {
 		const { sql, DB, id } = dbFixture();
 		const claimed = await claimInngestReport(DB, id, 1, 'run-A', '2026-10-17T09:00:00.000Z');
 		const removed: string[] = [];
-		const env = { DB, OBJECTS: { async put() { throw new Error('SYNTHETIC R2 storage failure'); }, async get() { return null; }, async delete(key: string) { removed.push(key); } } } as unknown as CloudflareEnv;
-		await expect(commitInngestReportResult(env, 1, { ...claimed!, status: 'done', markdown: 'Synthetic complete Markdown.', summary: null, meta: { model: 'synthetic-model', prompt_version: 'fixture', generated_at: '2026-10-17T09:00:00.000Z' } }, 'run-A')).rejects.toThrow('SYNTHETIC R2 storage failure');
+		const env = { DB, S3: { async put() { throw new Error('SYNTHETIC S3 storage failure'); }, async get() { return null; }, async delete(key: string) { removed.push(key); } } } as unknown as CloudflareEnv;
+		await expect(commitInngestReportResult(env, 1, { ...claimed!, status: 'done', markdown: 'Synthetic complete Markdown.', summary: null, meta: { model: 'synthetic-model', prompt_version: 'fixture', generated_at: '2026-10-17T09:00:00.000Z' } }, 'run-A')).rejects.toThrow('SYNTHETIC S3 storage failure');
 		expect(removed).toHaveLength(1);
 		expect(removed[0]).toMatch(new RegExp(`^reports/${id}/result-inngest-1-.*\\.json$`));
 		expect(sql.prepare('SELECT status FROM entities WHERE id=?').get(id)).toMatchObject({ status: 'generating' });
@@ -49,7 +49,7 @@ describe('Inngest application report generation fencing', () => {
 		const objects = new Map<string, string>();
 		let puts = 0; let release!: () => void;
 		const bothPuts = new Promise<void>((resolve) => { release = resolve; });
-		const env = { DB, OBJECTS: { async put(key: string, body: ArrayBuffer | ArrayBufferView | string) { objects.set(key, typeof body === 'string' ? body : new TextDecoder().decode(body as ArrayBufferView)); puts++; if (puts === 2) release(); await bothPuts; }, async get(key: string) { const value = objects.get(key); return value ? { text: async () => value, json: async () => JSON.parse(value), body: null, httpMetadata: {}, customMetadata: {}, size: value.length, etag: 'x', uploaded: new Date(), writeHttpMetadata() {} } : null; }, async delete(key: string) { objects.delete(key); } } } as unknown as CloudflareEnv;
+		const env = { DB, S3: { async put(key: string, body: Uint8Array) { objects.set(key, new TextDecoder().decode(body)); puts++; if (puts === 2) release(); await bothPuts; }, async get(key: string) { const value = objects.get(key); return value ? new TextEncoder().encode(value) : null; }, async delete(key: string) { objects.delete(key); } } } as unknown as CloudflareEnv;
 		const result = { ...claimed!, status: 'done' as const, markdown: 'winner markdown', summary: null, meta: { model: 'synthetic-model', prompt_version: 'fixture', generated_at: '2026-10-17T09:00:00.000Z' } };
 		const [committed, duplicate] = await Promise.all([commitInngestReportResult(env, 1, result, 'run-A'), commitInngestReportResult(env, 1, { ...result, markdown: 'loser markdown' }, 'run-A')]);
 		expect([committed, duplicate].filter(Boolean)).toHaveLength(1);
@@ -79,7 +79,7 @@ describe('Inngest application report generation fencing', () => {
 		const claimed = await claimInngestReport(DB, id, 1, 'run-A');
 		const objects = new Map<string, string>(); let loseCommitAck = true; let objectWrites = 0;
 		const flaky = { prepare(query: string) { const original = DB.prepare(query); return { bind(...values: unknown[]) { original.bind(...values); return this; }, async first<T>() { return original.first<T>(); }, async all<T>() { return original.all<T>(); }, async run() { const result = await original.run(); if (query.includes("SET status='done'") && loseCommitAck) { loseCommitAck = false; throw new Error('synthetic committed report response lost'); } return result; } }; } } as unknown as D1DatabaseLike;
-		const env = { DB: flaky, OBJECTS: { async put(key: string, body: ArrayBuffer | ArrayBufferView | string) { objectWrites++; objects.set(key, typeof body === 'string' ? body : new TextDecoder().decode(body as ArrayBufferView)); }, async get(key: string) { const value = objects.get(key); return value ? { body: new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode(value)); controller.close(); } }) } : null; }, async delete(key: string) { objects.delete(key); } } } as unknown as CloudflareEnv;
+		const env = { DB: flaky, S3: { async put(key: string, body: Uint8Array) { objectWrites++; objects.set(key, new TextDecoder().decode(body)); }, async get(key: string) { const value = objects.get(key); return value ? new TextEncoder().encode(value) : null; }, async delete(key: string) { objects.delete(key); } } } as unknown as CloudflareEnv;
 		const done = { ...claimed!, status: 'done' as const, markdown: 'committed Markdown', summary: null, meta: { model: 'synthetic-model', prompt_version: 'fixture', generated_at: '2026-10-17T09:00:00.000Z' } };
 		expect(await commitInngestReportResult(env, 1, done, 'run-A')).toBe(true);
 		const storedArtifact = [...objects];
@@ -92,7 +92,7 @@ describe('Inngest application report generation fencing', () => {
 		expect([...objects]).toEqual(storedArtifact);
 		const ambiguous = dbFixture(); const pending = await claimInngestReport(ambiguous.DB, ambiguous.id, 1, 'run-B');
 		const staged = new Map<string, string>();
-		const uncertain = { DB: { prepare(query: string) { if (query.startsWith('SELECT generation,status')) throw new Error('synthetic authoritative D1 read failure'); const statement = ambiguous.DB.prepare(query); if (query.includes("SET status='done'")) return { bind(...values: unknown[]) { statement.bind(...values); return this; }, first: <T>() => statement.first<T>(), all: <T>() => statement.all<T>(), async run() { throw new Error('synthetic ambiguous D1 write'); } }; return statement; } }, OBJECTS: { async put(key: string, body: ArrayBuffer | ArrayBufferView | string) { staged.set(key, typeof body === 'string' ? body : new TextDecoder().decode(body as ArrayBufferView)); }, async get() { return null; }, async delete(key: string) { staged.delete(key); } } } as unknown as CloudflareEnv;
+		const uncertain = { DB: { prepare(query: string) { if (query.startsWith('SELECT generation,status')) throw new Error('synthetic authoritative D1 read failure'); const statement = ambiguous.DB.prepare(query); if (query.includes("SET status='done'")) return { bind(...values: unknown[]) { statement.bind(...values); return this; }, first: <T>() => statement.first<T>(), all: <T>() => statement.all<T>(), async run() { throw new Error('synthetic ambiguous D1 write'); } }; return statement; } }, S3: { async put(key: string, body: Uint8Array) { staged.set(key, new TextDecoder().decode(body)); }, async get() { return null; }, async delete(key: string) { staged.delete(key); } } } as unknown as CloudflareEnv;
 		await expect(commitInngestReportResult(uncertain, 1, { ...pending!, status: 'done', markdown: 'ambiguous staged Markdown', summary: null, meta: { model: 'synthetic-model', prompt_version: 'fixture', generated_at: '2026-10-17T09:00:02.000Z' } }, 'run-B')).rejects.toThrow('synthetic ambiguous D1 write');
 		expect(staged.size).toBe(1);
 	});

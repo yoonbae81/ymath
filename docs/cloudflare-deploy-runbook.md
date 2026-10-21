@@ -15,7 +15,7 @@ TMPDIR=/Users/y/.hermes/profiles/plan/cache/scratch npm run build   # Worker 번
 
 ```sh
 npx wrangler d1 create ymath            # → 출력된 database_id 복사
-npx wrangler r2 bucket create ymath-private
+# S3 bucket is external at https://s3.xcv.kr (ymath). No local R2 bucket creation needed.
 ```
 
 `wrangler.toml`의 `database_id = "local-only"`를 위에서 복사한 실제 ID로 교체.
@@ -33,7 +33,34 @@ npx wrangler d1 execute ymath --remote --command "SELECT name FROM d1_migrations
 npx wrangler secret put RUNNER_TOKEN    # 강한 랜덤 값 입력 (openssl rand -hex 32)
 ```
 
+Worker 와 Mac Connect Runner 는 공통 `RUNNER_TOKEN` 하나만 사용한다.
+데이터 저장소는 `s3.xcv.kr`의 MinIO 버킷 `ymath`이며 R2 바인딩은 사용하지 않는다.
+
+## 3.5 Connect item 파이프라인 (baton Connect app 소유)
+
+- `ITEM_ANALYSIS_BACKEND=baton` 일 때 item 파이프라인(업로드 접수 → Inngest 이벤트 →
+  baton Connect Runner 실행 → 콜백 확정)의 소유자는 **baton 레포의 Connect app**
+  (`baton/src/ymath/connect-item.ts`, function id `ymath-item-pipeline`)이다. Worker 는
+  narrow 한 인증 콜백(`RUNNER_TOKEN` bearer)만 제공한다.
+- 레거시 리포트(`/api/inngest`, hosted slice-app 의존)는 여전히 남아 있으며 별도 백엔드다 —
+  item 파이프라인과 혼동하지 않는다.
+- Connect Runner 콜백 베이스 URL 은 `/math/api` 까지 포함해야 한다
+  (예: `https://xcv.kr/math/api` → 콜백 경로 `${callbacksBase}/runner/items/<action>`).
+- Worker 와 Mac Connect Runner 의 콜백 인증 env 는 `RUNNER_TOKEN` 하나다.
+- 커밋 영수증: Runner commit 콜백은 finalization 이전에 live lease fence 아래 불변 영수증을
+  D1 jobs.payload(`connect_commit`)에 묶고, done 트랜잭션이 이를 확정한다. 응답 유실 replay 는
+  삭제된 S3 staging 없이 이 영수증만으로 판정하며 다른 token/result/hash 는 409 로 거부한다.
+- 배포/전환 시: 이 파이프라인은 Worker 와 Mac Connect Runner 가 **하나의 shared Inngest
+  drain** 을 공유하므로, 롤아웃은 coordinated shared drain + 양쪽 재시작이 필요하다.
+  이 런북은 배포·재시작을 수행하지 않는다(실행은 운영 담당).
+
 ## 4. 빌드 + 배포
+
+> **2026-10-21 바인딩·env rename**: Worker S3 바인딩과 baton Runner 쪽 ymath env 모두
+> `YMATH_S3_*` → `S3_*`로 변경되었다. Runner env 파일은 `~/.config/baton/ymath/secrets.env`에서
+> `S3_*`, `WORKER_CALLBACKS_URL`, `INNGEST_EVENT_KEY_YMATH`를 제공한다. `INNGEST_EVENT_KEY_YMATH`만
+> 접미사를 유지한다 — SHS가 공용 `INNGEST_EVENT_KEY`를 먼저 읽으므로 prefix를 지우면 충돌한다.
+> LLM credential은 앱 파일에 없다 — 공통 `secrets.env`의 `OMLX_*`(Qwen)·`ZAI_*`(GLM)만 참조한다.
 
 ```sh
 TMPDIR=/Users/y/.hermes/profiles/plan/cache/scratch npm run build
@@ -52,16 +79,30 @@ curl -s -o /dev/null -w '%{http_code}\n' https://xcv.kr/math/login   # 410 기�
 
 브라우저에서 `https://xcv.kr/math` → 사진 업로드 1건 → "대기 중" 표시 확인.
 
-## 6. Node 실행기 기동 (Mac Studio)
+## 6. Batron Runner 기동 (Mac Studio)
 
+Runner 설정 파일 생성 또는 업데이트:
 ```sh
-RUNNER_URL=https://xcv.kr/math \
-RUNNER_TOKEN=<3번과 동일한 값> \
-npm run runner:cloudflare        # src/lib/server/cloudflare/runner.ts 폴링
+cat ~/.config/baton/secrets.env
+```
+S3 / LLM 키는 앱별·공통 secrets 파일로 분리되어 있다:
+```sh
+cat ~/.config/baton/secrets.env        # 공통: INNGEST_SIGNING_KEY, RUNNER_TOKEN,
+                                       #       OMLX_API_KEY/OMLX_BASE_URL/OMLX_MODEL (Qwen),
+                                       #       ZAI_API_KEY/ZAI_BASE_URL/ZAI_MODEL (GLM)
+cat ~/.config/baton/ymath/secrets.env  # ymath: S3_ENDPOINT, S3_BUCKET,
+                                       #        S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY,
+                                       #        INNGEST_EVENT_KEY_YMATH, WORKER_CALLBACKS_URL
 ```
 
-실행기 기동 후 업로드한 항목이 `queued → ocr → analyzing → done` 으로 바뀌는지 목록 새로고침에서 확인.
-주의: 실행기는 실제 OCR/LLM을 호출한다 — `user/config/providers.json`의 실제 provider 설정을 사용하므로, 원하지 않으면 기동 전에 해당 설정을 확인할 것.
+(시크릿 값은 런북에서 제거했다. 실제 값은 로컬 secrets 파일/`wrangler secret` 으로만 관리한다.)
+Runner 실행 (baton runner가 ymath app을 포함):
+```sh
+cd /Users/y/Github/baton
+npm run build  # sitter 서비스 파일 tidy
+# runner.cloud.json에 apps.ymath 추가 완료
+cat /Users/y/Github/baton/config/runner.cloud.json
+```
 
 ## 7. 정상 확인 후 Zero Trust 적용 (사용자 계획 단계)
 

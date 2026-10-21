@@ -18,9 +18,11 @@
 		getAvailablePeriods,
 		isItemInPeriod,
 		providerLabel,
+		PROVIDER_LABEL,
 		type FeedbackChoice,
 		type ItemRecord,
-		type SavedAnalysis
+		type SavedAnalysis,
+		AVAILABLE_PROVIDERS
 	} from '$lib/types';
 
 	let { data } = $props();
@@ -37,6 +39,7 @@
 	let busy = $state(false);
 	let actionError = $state<string | null>(null);
 	// 재분석에 쓸 LLM. 고르기 전에는 이 항목의 마지막 선택(없으면 서버 기본값)을 보여 준다
+	let selectedProvider = $state<string | null>(null);
 
 	// 공유 링크로 들어온 방문자는 보기만 한다(원본 사진은 서버 설정에 따라 숨김)
 	const readonly = false;
@@ -180,7 +183,10 @@
 		}
 	}
 
-	const retry = (i: ItemRecord) => call('POST', `${base}/api/items/${i.id}/retry?provider=omlx`);
+	const retry = (i: ItemRecord) => {
+		selectedProvider = i.meta?.provider ?? selectedProvider;
+		call('POST', `${base}/api/items/${i.id}/retry${selectedProvider ? `?provider=${selectedProvider}` : ''}`);
+	};
 	// 별은 눌리자마자 채워지게(터치 피드백) 서버 저장을 기다리지 않는다. 저장에 실패하면 되돌린다
 	async function toggleFavorite(i: ItemRecord) {
 		const target = !i.favorite;
@@ -518,7 +524,9 @@
 			{#if actionError}<p class="alert bad">{actionError}</p>{/if}
 			{#if !readonly}
 				<footer>
-					<span class="provider">Qwen</span>
+					<select bind:value={selectedProvider} aria-label="분석 모델" disabled={open.status !== 'done' && open.status !== 'failed'}>
+						{#each AVAILABLE_PROVIDERS as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
+					</select>
 					<button class="btn" disabled={busy || (open.status !== 'done' && open.status !== 'failed')} onclick={() => retry(open)}>🔄 다시 분석</button>
 					<button class="btn danger" disabled={busy || open.status === 'ocr' || open.status === 'analyzing'} onclick={() => remove(open)}>🗑 삭제</button>
 				</footer>

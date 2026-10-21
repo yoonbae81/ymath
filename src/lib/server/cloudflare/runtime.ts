@@ -1,19 +1,23 @@
-import { claimJob, heartbeatJob, cloudItemBackend, runnerClaimableKind, type ClaimedJob, type D1DatabaseLike, type D1Statement } from './jobs';
+import { claimJob, heartbeatJob, cloudItemBackend, hostedItemPipeline, runnerClaimableKind, type ClaimedJob, type D1DatabaseLike, type D1Statement } from './jobs';
 import { acceptItem, markViewed, saveFeedback, setFavorite } from './repository';
+import { batonDefaultProvider } from './baton-catalog';
 import { formatPeriodLabel, isItemInPeriod, isPastMonthPeriod, type ItemRecord, type ReportRecord, type Workbook } from '$lib/types';
 import { cloudReportBackend } from './report-outbox';
+import { requireS3Store, type S3Store } from './s3-store';
 
 export { markViewed, saveFeedback, setFavorite };
 export { cloudItemBackend, runnerClaimableKind } from './jobs';
 
-export interface R2ObjectBody { body: ReadableStream<Uint8Array>; httpMetadata?: { contentType?: string } }
-export interface R2BucketLike {
-	put(key: string, value: ArrayBuffer | Uint8Array, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
-	get(key: string): Promise<R2ObjectBody | null>;
-	delete(key: string): Promise<void>;
-}
-export interface CloudflareEnv { DB: D1DatabaseLike & { batch<T = unknown>(statements: D1Statement[]): Promise<T[]> }; OBJECTS: R2BucketLike; WORKBOOKS_JSON?: string; TAXONOMY_JSON?: string; RUNNER_TOKEN?: string; TEST_ONLY_FIXTURES?: string; REPORT_BACKEND?: string; REPORT_INNGEST_EXECUTION_ENABLED?: string; ITEM_ANALYSIS_BACKEND?: string; OCR_MODEL?: string; STUDENT_NAME?: string; INNGEST_EVENT_KEY?: string; INNGEST_SIGNING_KEY?: string; LLM_API_KEY?: string; LLM_BASE_URL?: string; LLM_MODEL?: string }
+export interface CloudflareEnv { DB: D1DatabaseLike & { batch<T = unknown>(statements: D1Statement[]): Promise<T[]> }; S3: S3Store; WORKBOOKS_JSON?: string; TAXONOMY_JSON?: string; RUNNER_TOKEN?: string; TEST_ONLY_FIXTURES?: string; REPORT_BACKEND?: string; REPORT_INNGEST_EXECUTION_ENABLED?: string; ITEM_ANALYSIS_BACKEND?: string; OCR_MODEL?: string; STUDENT_NAME?: string; SYNTHETIC_SUBMIT_ENABLED?: string; INNGEST_EVENT_KEY?: string; INNGEST_SIGNING_KEY?: string; OMLX_API_KEY?: string; OMLX_BASE_URL?: string; OMLX_MODEL?: string; S3_ENDPOINT?: string; S3_BUCKET?: string; S3_REGION?: string; S3_ACCESS_KEY_ID?: string; S3_SECRET_ACCESS_KEY?: string }
 export class CloudStorageError extends Error { constructor(message: string) { super(message); this.name = 'CloudStorageError'; } }
+
+/** S3-only storage: every object path resolves the shared store up front and fails
+ * closed when S3_* configuration is missing (no legacy binding fallback). */
+export function resolveS3(env: CloudflareEnv): S3Store {
+	const configured = env as unknown as Partial<S3Store> & CloudflareEnv;
+	if (configured.S3) return configured.S3 as S3Store;
+	return requireS3Store(env);
+}
 
 /** A failed D1 response can be delivered after the transaction committed. Only
  * remove a staging object after an authoritative reference check proves it unused. */
@@ -25,7 +29,7 @@ async function deleteStagedIfUnreferenced(env: CloudflareEnv, keys: string[]) {
 				UNION ALL SELECT 1 AS used FROM analyses WHERE analysis_key=?
 				UNION ALL SELECT 1 AS used FROM jobs WHERE result_key=?`).bind(key,key,key,key,key,key).first<{ used: number }>();
 		} catch { continue; }
-		if (!used) await env.OBJECTS.delete(key).catch(() => undefined);
+		if (!used) await resolveS3(env).delete(key).catch(() => undefined);
 	}
 }
 
@@ -48,14 +52,15 @@ export async function acceptCloudItem(env: CloudflareEnv, workbook: Workbook, ra
 	if (!idempotencyKey || idempotencyKey.length > 128) throw new Error('invalid idempotency key');
 	const nonce = crypto.randomUUID();
 	const rawKey = `items/raw/${nonce}`;
-	await env.OBJECTS.put(rawKey, raw, { httpMetadata: { contentType: 'application/octet-stream' } });
-	const outboxJobId = cloudItemBackend(env) === 'inngest' ? crypto.randomUUID() : undefined;
+	const s3 = resolveS3(env);
+	await s3.put(rawKey, raw, 'application/octet-stream');
+	const outboxJobId = hostedItemPipeline(env) ? crypto.randomUUID() : undefined;
 	try {
-		const accepted = await acceptItem(env.DB, { workbook, imageKey: '', rawKey, idempotencyKey, provider: 'omlx', outboxJobId });
-		if (!accepted.created) await env.OBJECTS.delete(rawKey);
+		const accepted = await acceptItem(env.DB, { workbook, imageKey: '', rawKey, idempotencyKey, provider: batonDefaultProvider, outboxJobId });
+		if (!accepted.created) await s3.delete(rawKey);
 		return accepted;
 	} catch (e) {
-		await env.OBJECTS.delete(rawKey).catch(() => undefined);
+		await s3.delete(rawKey).catch(() => undefined);
 		throw e;
 	}
 }
@@ -136,22 +141,9 @@ export async function claimCloudJob(env: CloudflareEnv, runner: string, now = ne
 		GROUP BY id ORDER BY count DESC LIMIT 60`).all<{ id: string; count: number; example: string }>();
 	let ocrText: string | null = null;
 	if (entity.ocr_key) {
-		const object = await env.OBJECTS.get(entity.ocr_key);
-		if (object) {
-			const reader = object.body.getReader();
-			const decoder = new TextDecoder();
-			let size = 0;
-			let text = '';
-			let tooLarge = false;
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				size += value.byteLength;
-				if (size > 1_000_000) { tooLarge = true; await reader.cancel(); break; }
-				text += decoder.decode(value, { stream: true });
-			}
-			if (!tooLarge) ocrText = text + decoder.decode();
-		}
+		const bytes = await resolveS3(env).get(entity.ocr_key);
+		// OCR text is capped at 1,000,000 characters (legacy stream cap preserved).
+		if (bytes && bytes.byteLength <= 1_000_000) ocrText = new TextDecoder().decode(bytes);
 	}
 	return { ...job, entity: record, knownPatterns: patterns.results ?? [], rawAvailable: Boolean(entity.raw_key || entity.image_key), normalizedImage: Boolean(entity.image_key), ocrText };
 }
@@ -180,7 +172,7 @@ export async function failCloudJob(env: CloudflareEnv, job: ClaimedJob, token: s
 	const ok = ((out[0] as { meta?: { changes?: number } })?.meta?.changes ?? 0) === 1;
 	if (ok && job.kind === 'item' && raw?.raw_key) {
 		const terminal = await env.DB.prepare("SELECT 1 AS done FROM jobs WHERE id=? AND state='failed' AND updated_at=?").bind(job.id,now).first<{ done: number }>();
-		if (terminal) await env.OBJECTS.delete(raw.raw_key).catch(() => undefined);
+		if (terminal) await resolveS3(env).delete(raw.raw_key).catch(() => undefined);
 	}
 	return ok;
 }
@@ -206,7 +198,9 @@ export async function readClaimedRaw(env: CloudflareEnv, jobId: string, token: s
 	const row = await env.DB.prepare(`SELECT COALESCE(e.raw_key,e.image_key) AS raw_key FROM jobs j JOIN entities e ON e.id = j.entity_id
 		WHERE j.id = ? AND j.state = 'leased' AND j.lease_token = ? AND j.lease_until > ? AND e.deleted_at IS NULL AND e.generation = j.entity_generation`)
 		.bind(jobId, token, new Date().toISOString()).first<{ raw_key: string | null }>();
-	return row?.raw_key ? env.OBJECTS.get(row.raw_key) : null;
+	if (!row?.raw_key) return null;
+	const bytes = await resolveS3(env).get(row.raw_key);
+	return bytes ? new Response(bytes as BodyInit) : null;
 }
 
 /** Persist the normalized JPEG before any fallible OCR/analysis work. The key is stable
@@ -221,7 +215,7 @@ export async function persistCloudNormalizedImage(env: CloudflareEnv, job: Claim
 	if (!current) return false;
 	if (current.image_key) return true;
 	const key = `items/${job.entity_id}/normalized-${job.entity_generation}.jpg`;
-	await env.OBJECTS.put(key,jpeg,{httpMetadata:{contentType:'image/jpeg'}});
+	await resolveS3(env).put(key,jpeg,'image/jpeg');
 	try {
 		const saved = await env.DB.prepare(`UPDATE entities SET image_key=?,raw_key=NULL,updated_at=? WHERE id=? AND kind='item' AND (image_key IS NULL OR image_key='')
 			AND deleted_at IS NULL AND generation=? AND EXISTS (SELECT 1 FROM jobs WHERE id=? AND entity_id=entities.id AND state='leased'
@@ -229,7 +223,7 @@ export async function persistCloudNormalizedImage(env: CloudflareEnv, job: Claim
 			.bind(key,now,job.entity_id,job.entity_generation,job.id,job.generation,token,now).run();
 		if ((saved.meta?.changes ?? 0) !== 1) {
 			const refs = await env.DB.prepare('SELECT 1 AS used FROM entities WHERE image_key=? AND deleted_at IS NULL').bind(key).first<{ used: number }>();
-			if (!refs) await env.OBJECTS.delete(key).catch(() => undefined);
+			if (!refs) await resolveS3(env).delete(key).catch(() => undefined);
 			return Boolean(refs);
 		}
 	} catch (cause) {
@@ -238,20 +232,19 @@ export async function persistCloudNormalizedImage(env: CloudflareEnv, job: Claim
 		try { refs = await env.DB.prepare('SELECT 1 AS used FROM entities WHERE image_key=? AND deleted_at IS NULL').bind(key).first<{ used: number }>(); }
 		catch { throw cause; }
 		if (refs) return true;
-		await env.OBJECTS.delete(key).catch(() => undefined);
+		await resolveS3(env).delete(key).catch(() => undefined);
 		throw cause;
 	}
 	if (current.raw_key) {
 		const stillRaw = await env.DB.prepare('SELECT raw_key FROM entities WHERE id=? AND deleted_at IS NULL').bind(job.entity_id).first<{ raw_key: string | null }>();
-		if (stillRaw?.raw_key !== current.raw_key) await env.OBJECTS.delete(current.raw_key).catch(() => undefined);
+		if (stillRaw?.raw_key !== current.raw_key) await resolveS3(env).delete(current.raw_key).catch(() => undefined);
 	}
 	return true;
 }
 
 export async function queueCloudReanalysis(env: CloudflareEnv, id: string, provider?: string) {
-	if (provider !== undefined && provider !== 'omlx') throw new Error('Qwen(omlx)만 사용할 수 있습니다');
 	const now = new Date().toISOString();
-	const selectedProvider = 'omlx';
+	const selectedProvider = provider ?? batonDefaultProvider;
 	const outboxJobId = crypto.randomUUID();
 	const statements = await env.DB.batch([
 		env.DB.prepare(`UPDATE entities SET status='queued', generation=generation+1, updated_at=?,
@@ -261,7 +254,7 @@ export async function queueCloudReanalysis(env: CloudflareEnv, id: string, provi
 		SELECT ?,id,'item',generation,'queued',?,'{}',?,? FROM entities e
 		WHERE id=? AND status='queued' AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.entity_id=e.id AND j.state IN ('queued','leased'))`)
 		.bind(outboxJobId, selectedProvider, now, now, id),
-		...(cloudItemBackend(env) === 'inngest' ? [env.DB.prepare(`INSERT INTO item_outbox (entity_id,generation,job_id,state,attempts,created_at,updated_at)
+		...(hostedItemPipeline(env) ? [env.DB.prepare(`INSERT INTO item_outbox (entity_id,generation,job_id,state,attempts,created_at,updated_at)
 		SELECT id,generation,?,'pending',0,?,? FROM entities e
 		WHERE id=? AND status='queued' AND deleted_at IS NULL AND generation=e.generation
 		AND NOT EXISTS (SELECT 1 FROM item_outbox o WHERE o.entity_id=e.id AND o.generation=e.generation)`).bind(outboxJobId, now, now, id)] : [])
@@ -270,12 +263,13 @@ export async function queueCloudReanalysis(env: CloudflareEnv, id: string, provi
 }
 
 export async function commitCloudResult(env: CloudflareEnv, job: ClaimedJob, token: string, jpeg: Uint8Array, analysis: unknown, meta: { provider: string; model: string; prompt_version: string; analyzed_at: string }, flags: ItemRecord['flags'], ocrText = '') {
-	const commitNow = new Date().toISOString();
+	const commitNow = new Date().toISOString().replace(/\.\d{3}Z$/, '.000Z') as string;
 	const record = await cloudItem(env, job.entity_id);
 	if (!record) return false;
 	const lease = await env.DB.prepare("SELECT 1 AS ok FROM jobs WHERE id=? AND state='leased' AND generation=? AND lease_token=? AND entity_generation=? AND lease_until > ?")
 		.bind(job.id, job.generation, token, job.entity_generation, commitNow).first<{ ok: number }>();
 	if (!lease) return false;
+
 	const saved: ItemRecord = { ...record, status: 'done', error: null, analysis: analysis as ItemRecord['analysis'], flags, meta: meta as ItemRecord['meta'] };
 	const imageKey = `items/${job.entity_id}/analysis-${meta.provider}-${job.id}-${job.generation}-${crypto.randomUUID()}.jpg`;
 	const analysisKey = `${imageKey}.json`;
@@ -284,19 +278,20 @@ export async function commitCloudResult(env: CloudflareEnv, job: ClaimedJob, tok
 	const oldAnalysis = await env.DB.prepare('SELECT analysis_key FROM analyses WHERE entity_id=? AND provider=?').bind(job.entity_id,meta.provider).first<{ analysis_key: string }>();
 	const staged = [imageKey,analysisKey,...(ocrText.trim() ? [ocrKey!] : [])];
 	try {
-		await env.OBJECTS.put(imageKey, jpeg, { httpMetadata: { contentType: 'image/jpeg' } });
-		await env.OBJECTS.put(analysisKey, new TextEncoder().encode(JSON.stringify({ analysis, meta, flags })), { httpMetadata: { contentType: 'application/json' } });
-		if (ocrText.trim()) await env.OBJECTS.put(ocrKey!, new TextEncoder().encode(ocrText), { httpMetadata: { contentType: 'text/plain; charset=utf-8' } });
+		const s3 = resolveS3(env);
+		await s3.put(imageKey, jpeg, 'image/jpeg');
+		await s3.put(analysisKey, new TextEncoder().encode(JSON.stringify({ analysis, meta, flags })), 'application/json');
+		if (ocrText.trim()) await s3.put(ocrKey!, new TextEncoder().encode(ocrText), 'text/plain; charset=utf-8');
 	} catch (cause) {
 		await deleteStagedIfUnreferenced(env, staged);
 		throw cause;
 	}
 	let out: unknown[];
 	try { out = await env.DB.batch([
-		env.DB.prepare(`UPDATE entities SET record_json = ?, image_key = ?, raw_key = NULL, ocr_key = ?, status = 'done', updated_at = ?
+		env.DB.prepare(`UPDATE entities SET record_json = ?, image_key = ?, raw_key = NULL, ocr_key = ?, status = 'done', updated_at = ?, current_analysis_key = ?
 			WHERE id = ? AND kind = 'item' AND generation = ? AND deleted_at IS NULL AND EXISTS (
-				 SELECT 1 FROM jobs WHERE id = ? AND entity_id = entities.id AND state = 'leased' AND generation = ? AND lease_token = ? AND entity_generation = entities.generation AND lease_until > ?)`)
-			.bind(JSON.stringify(saved), imageKey, ocrKey, meta.analyzed_at, job.entity_id, job.entity_generation, job.id, job.generation, token, commitNow),
+			 SELECT 1 FROM jobs WHERE id = ? AND entity_id = entities.id AND state = 'leased' AND generation = ? AND lease_token = ? AND entity_generation = entities.generation AND lease_until > ?)`).bind(
+				JSON.stringify(saved), imageKey, ocrKey, meta.analyzed_at, analysisKey, job.entity_id, job.entity_generation, job.id, job.generation, token, commitNow),
 		env.DB.prepare(`UPDATE jobs SET state = 'done', result_key = ?, lease_owner = NULL, lease_token = NULL, lease_until = NULL, updated_at = ?
 			WHERE id = ? AND state = 'leased' AND generation = ? AND lease_token = ? AND lease_until > ? AND EXISTS (
 			 SELECT 1 FROM entities e WHERE e.id = jobs.entity_id AND e.deleted_at IS NULL AND e.generation = jobs.entity_generation)`)
@@ -314,17 +309,17 @@ export async function commitCloudResult(env: CloudflareEnv, job: ClaimedJob, tok
 		return false;
 	}
 	const obsolete = new Set([oldObjects?.image_key,oldObjects?.raw_key,oldObjects?.ocr_key,oldAnalysis?.analysis_key].filter((key): key is string => Boolean(key) && key !== imageKey && key !== analysisKey && key !== ocrKey));
-	await Promise.all([...obsolete].map((key) => env.OBJECTS.delete(key).catch(() => undefined)));
+	await Promise.all([...obsolete].map((key) => resolveS3(env).delete(key).catch(() => undefined)));
 	return true;
 }
 
 export async function cloudAnalyses(env: CloudflareEnv, id: string) {
 	const rows = await env.DB.prepare('SELECT analysis_key,meta_json,flags_json FROM analyses WHERE entity_id = ? ORDER BY created_at').bind(id).all<{ analysis_key: string; meta_json: string; flags_json: string }>();
 	return Promise.all((rows.results ?? []).map(async (row) => {
-		const object = await env.OBJECTS.get(row.analysis_key);
-		if (!object) throw new CloudStorageError(`analysis artifact missing for ${id}`);
+		const bytes = await resolveS3(env).get(row.analysis_key);
+		if (!bytes) throw new CloudStorageError(`analysis artifact missing for ${id}`);
 		let value: { analysis: unknown; meta: unknown; flags: unknown };
-		try { value = await new Response(object.body).json() as typeof value; }
+		try { value = JSON.parse(new TextDecoder().decode(bytes)) as typeof value; }
 		catch (cause) { throw new CloudStorageError(`analysis artifact corrupt for ${id}: ${cause instanceof Error ? cause.message : String(cause)}`); }
 		if (!value || typeof value !== 'object' || !('analysis' in value) || !('meta' in value) || !('flags' in value)) throw new CloudStorageError(`analysis artifact corrupt for ${id}: required fields missing`);
 		return value;
@@ -358,10 +353,10 @@ export async function cloudReport(env: CloudflareEnv, id: string): Promise<Repor
 }
 
 async function readReportArtifact(env: CloudflareEnv, key: string, id: string): Promise<string> {
-	const object = await env.OBJECTS.get(key);
-	if (!object) throw new CloudStorageError(`report artifact missing for ${id}`);
+	const bytes = await resolveS3(env).get(key);
+	if (!bytes) throw new CloudStorageError(`report artifact missing for ${id}`);
 	try {
-		const body = await new Response(object.body).json() as { markdown?: unknown };
+		const body = JSON.parse(new TextDecoder().decode(bytes)) as { markdown?: unknown };
 		if (typeof body.markdown !== 'string') throw new Error('markdown field missing');
 		return body.markdown;
 	} catch (cause) { throw new CloudStorageError(`report artifact corrupt for ${id}: ${cause instanceof Error ? cause.message : String(cause)}`); }
@@ -445,7 +440,7 @@ export async function deleteCloudReport(env: CloudflareEnv, id: string) {
 		env.DB.prepare("UPDATE jobs SET state='cancelled',lease_owner=NULL,lease_token=NULL,lease_until=NULL,updated_at=? WHERE entity_id=? AND state IN ('queued','leased')").bind(now,id)
 	]);
 	if (((result[0] as { meta?: { changes?: number } })?.meta?.changes ?? 0) !== 1) return false;
-	if (old.report_key) await env.OBJECTS.delete(old.report_key).catch(() => undefined);
+	if (old.report_key) await resolveS3(env).delete(old.report_key).catch(() => undefined);
 	return true;
 }
 
@@ -454,7 +449,7 @@ export async function commitCloudReportResult(env: CloudflareEnv, job: ClaimedJo
 	const now = new Date().toISOString();
 	const artifactKey = `reports/${report.id}/result-${job.id}-${job.generation}-${crypto.randomUUID()}.json`;
 	const old = await env.DB.prepare('SELECT report_key FROM entities WHERE id=? AND kind=\'report\' AND generation=? AND deleted_at IS NULL').bind(report.id,job.entity_generation).first<{ report_key: string | null }>();
-	try { await env.OBJECTS.put(artifactKey, new TextEncoder().encode(JSON.stringify({ markdown: report.markdown })), { httpMetadata: { contentType: 'application/json' } }); }
+	try { await resolveS3(env).put(artifactKey, new TextEncoder().encode(JSON.stringify({ markdown: report.markdown })), 'application/json'); }
 	catch (cause) { await deleteStagedIfUnreferenced(env,[artifactKey]); throw cause; }
 	const metadata = { ...report, markdown: null };
 	let result: unknown[];
@@ -473,12 +468,12 @@ export async function commitCloudReportResult(env: CloudflareEnv, job: ClaimedJo
 		await deleteStagedIfUnreferenced(env,[artifactKey]);
 		return false;
 	}
-	if (old?.report_key && old.report_key !== artifactKey) await env.OBJECTS.delete(old.report_key).catch(() => undefined);
+	if (old?.report_key && old.report_key !== artifactKey) await resolveS3(env).delete(old.report_key).catch(() => undefined);
 	return true;
 }
 
 /** Inngest report commit: generation-fenced D1 pointer swap after the Markdown
- * artifact is safely staged in R2. Immutable keys prevent a losing writer from
+ * artifact is safely staged in S3. Immutable keys prevent a losing writer from
  * overwriting a winner; persistent owner and content hash identify save-step replay. */
 export async function commitInngestReportResult(env: CloudflareEnv, generation: number, report: ReportRecord, owner: string) {
 	if (report.status !== 'done' || typeof report.markdown !== 'string') return false;
@@ -492,7 +487,7 @@ export async function commitInngestReportResult(env: CloudflareEnv, generation: 
 	if (before.status !== 'generating') return false;
 	const key = `reports/${report.id}/result-inngest-${generation}-${crypto.randomUUID()}.json`;
 	try {
-		await env.OBJECTS.put(key,new TextEncoder().encode(JSON.stringify({ markdown: report.markdown })),{httpMetadata:{contentType:'application/json'}});
+		await resolveS3(env).put(key,new TextEncoder().encode(JSON.stringify({ markdown: report.markdown })),'application/json');
 	} catch (cause) {
 		await deleteStagedIfUnreferenced(env,[key]);
 		throw cause;
@@ -527,6 +522,6 @@ export async function commitInngestReportResult(env: CloudflareEnv, generation: 
 		await deleteStagedIfUnreferenced(env,[key]);
 		throw cause;
 	}
-	if (before.report_key && before.report_key !== key) await env.OBJECTS.delete(before.report_key).catch(() => undefined);
+	if (before.report_key && before.report_key !== key) await resolveS3(env).delete(before.report_key).catch(() => undefined);
 	return true;
 }

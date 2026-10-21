@@ -20,8 +20,11 @@ export const imageUserMessage = (base64: string, prompt: string): { role: 'user'
 });
 
 export class QuotaExceededError extends Error {
-	constructor(message: string, public readonly status?: number) {
+	// node --test(strip-only mode) 호환을 위해 parameter property 대신 명시 할당을 쓴다.
+	readonly status?: number;
+	constructor(message: string, status?: number) {
 		super(message);
+		this.status = status;
 		this.name = 'QuotaExceededError';
 	}
 }

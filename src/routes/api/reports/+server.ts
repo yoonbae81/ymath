@@ -2,7 +2,7 @@ import { error, json } from '@sveltejs/kit';
 import { requireAjax, requireMutationRate } from '$lib/server/guard';
 import { NODE_RUNTIME } from '$lib/server/runtime-target';
 import { cloudReports, createCloudReport } from '$lib/server/cloudflare/runtime';
-import { assertReportInngestConfigured, makeSliceApp } from '$lib/server/inngest-slice/app';
+
 import type { RequestHandler } from './$types';
 
 export const GET: RequestHandler = async ({ platform }) => {
@@ -61,12 +61,7 @@ export const POST: RequestHandler = async ({ request, url, getClientAddress, pla
 	const force = Boolean(body.force);
 	if (platform?.env?.DB) {
 		try {
-			assertReportInngestConfigured(platform.env);
 			const result = await createCloudReport(platform.env, rawTopic, period, force);
-			if (!result.cached && platform.env.REPORT_BACKEND === 'inngest') {
-				try { await makeSliceApp(platform.env).publishReportOutbox(); }
-				catch (err) { console.error('[report outbox publish]', err); /* committed D1 outbox remains recoverable by the Inngest cron */ }
-			}
 			return json(result, { status: result.cached ? 200 : 202 });
 		} catch (err) {
 			if (err instanceof Error && err.message.includes('해당 기간')) error(422, err.message);

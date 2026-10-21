@@ -1,7 +1,10 @@
 /** 분석에 쓸 수 있는 LLM */
-export const PROVIDERS = ['omlx'] as const;
+export const PROVIDERS = ['omlx', 'glm', 'agy'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { omlx: 'Qwen' };
+export const PROVIDER_LABEL: Record<Provider, string> = { omlx: 'Qwen', glm: 'GLM', agy: 'Gemini' };
+
+/** 분석 UI 에서 재분석 버튼 옆에 보여주는 프로바이더 옵션 (catalog 의 providers 키와 동기화) */
+export const AVAILABLE_PROVIDERS: readonly { id: Provider; label: string }[] = PROVIDERS.map((id) => ({ id, label: PROVIDER_LABEL[id] }));
 
 /** 삭제된 LLM. 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
 const LEGACY_PROVIDER_LABEL: Record<string, string> = { claude: 'Claude', zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)' };

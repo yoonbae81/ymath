@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { acceptCloudItem, cloudItem, cloudItems, readBoundedRequest, type CloudflareEnv } from './runtime';
+import type { S3Store } from './s3-store';
 
-function fixtureEnv() {
+function fixtureEnv(s3?: Partial<S3Store>) {
 	const stored = new Map<string, Uint8Array>();
 	const sql: string[] = [];
 	let entity: { id: string; record_json: string } | null = null;
+	const store: S3Store = {
+		async put(key: string, value: Uint8Array) { stored.set(key, value); },
+		async get(key: string) { return stored.get(key) ?? null; },
+		async delete(key: string) { stored.delete(key); },
+		...s3
+	};
 	const env = {
-		OBJECTS: {
-			async put(key: string, value: Uint8Array) { stored.set(key, value); },
-			async get(key: string) { const value = stored.get(key); return value ? { body: new ReadableStream<Uint8Array>({ start(c) { c.enqueue(value); c.close(); } }) } : null; },
-			async delete(key: string) { stored.delete(key); }
-		},
+		S3: store,
 		DB: {
 			prepare(query: string) {
 				sql.push(query);
@@ -23,6 +26,13 @@ function fixtureEnv() {
 }
 
 describe('Cloudflare storage runtime', () => {
+	it('fails closed without S3 configuration before writing storage or D1', async () => {
+		const f = fixtureEnv();
+		delete (f.env as { S3?: unknown }).S3;
+		await expect(acceptCloudItem(f.env, {} as never, new Uint8Array([1]), 'missing-s3')).rejects.toThrow(/S3_/);
+		expect(f.stored.size).toBe(0);
+		expect(f.sql).toEqual([]);
+	});
 	it('writes raw uploads privately before durable item/job acceptance and removes orphan on failure', async () => {
 		const f = fixtureEnv();
 		const result = await acceptCloudItem(f.env, { id: 'w', name: 'Workbook', publisher: 'P', grade: '중1', semester: 1 } as never, new Uint8Array([1, 2, 3]), 'request-1');

@@ -12,7 +12,7 @@ function approval(prepared) {
 }
 async function bindings(f) {
  const config=join(f.root,'wrangler.json');
- await writeFile(config,JSON.stringify({name:'cutover-fixture',compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'fixture',database_id:'fixture'}],r2_buckets:[{binding:'OBJECTS',bucket_name:'fixture'}]}));
+ await writeFile(config,JSON.stringify({name:'cutover-fixture',compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'fixture',database_id:'fixture'}],S3_ENDPOINT:'https://s3.example.test',S3_BUCKET:'ymath',S3_REGION:'us-east-1',S3_ACCESS_KEY_ID:'synthetic',S3_SECRET_ACCESS_KEY:'synthetic'));
  const proxy=await getPlatformProxy({configPath:config,persist:{path:join(f.root,'state')},remoteBindings:false,envFiles:[]});
  try {
   const migrations=new URL('../migrations/',import.meta.url);

@@ -225,7 +225,7 @@ async function openRemote(target) {
  const root=await mkdtemp(join(tmpdir(),'ymath-approved-remote-'));
  const configPath=join(root,'wrangler.json');
  // No repository configuration, .env, Worker secrets, LLM bindings, app code or schema migration.
- await writeFile(configPath,JSON.stringify({name:'ymath-approved-data-cutover',account_id:target.accountId,compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'approved-cutover-target',database_id:target.databaseId,remote:true}],r2_buckets:[{binding:'OBJECTS',bucket_name:target.bucket,remote:true}]}),{flag:'wx',mode:0o600});
+ await writeFile(configPath,JSON.stringify({name:'ymath-approved-data-cutover',account_id:target.accountId,compatibility_date:'2026-10-17',d1_databases:[{binding:'DB',database_name:'approved-cutover-target',database_id:target.databaseId,remote:true}],S3_ENDPOINT:target.s3Endpoint||'https://s3.xcv.kr',S3_BUCKET:target.bucket,S3_REGION:'us-east-1',S3_ACCESS_KEY_ID:target.accessKeyId,S3_SECRET_ACCESS_KEY:target.secretKey]}),{flag:'wx',mode:0o600});
  try {
   const {getPlatformProxy}=await import('wrangler');
   const proxy=await getPlatformProxy({configPath,remoteBindings:true,envFiles:[],persist:false});
