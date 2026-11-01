@@ -58,7 +58,19 @@ export const POST: RequestHandler = async ({ request, url, getClientAddress, pla
 		const { createItem, itemDir } = await import('$lib/server/store');
 		const record = createItem(workbook);
 		const dir = itemDir(record.id);
-		(await import('node:fs')).writeFileSync((await import('node:path')).join(dir, record.image), processed);
+		const fs = await import('node:fs');
+		const path = await import('node:path');
+		fs.writeFileSync(path.join(dir, record.image), processed);
+		// 사진 보존 정책: MinIO 에 백업된 사진은 분석 성공·실패와 무관하게 절대 삭제되지 않는다.
+		// 백업에 실패하면 접수 자체를 거절한다(보존이 보장되지 않는 사진은 받지 않는다).
+		try {
+			const { mirrorPhoto } = await import('$lib/server/photo-store');
+			await mirrorPhoto(`items/${record.id}/${record.image}`, processed);
+		} catch (cause) {
+			fs.rmSync(dir, { recursive: true, force: true });
+			console.error('[photo backup]', cause);
+			error(503, '사진 백업 저장에 실패했습니다. 잠시 후 다시 시도해 주세요');
+		}
 		(await import('$lib/server/queue')).getQueue().enqueue(record.id);
 		return json({ id: record.id, status: record.status }, { status: 201 });
 	}

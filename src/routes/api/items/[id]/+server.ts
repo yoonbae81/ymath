@@ -37,6 +37,15 @@ export const DELETE: RequestHandler = async ({ params, request, getClientAddress
 		const record = readRecord(params.id);
 		if (!record) error(404, '항목을 찾을 수 없습니다');
 		if (record.status === 'ocr' || record.status === 'analyzing') error(409, '분석 중인 항목은 삭제할 수 없습니다');
+		// 명시적 삭제는 MinIO 사본까지 함께 지운다. MinIO 삭제에 실패하면 로컬도 지우지 않고
+		// 거절한다 — "UI 에서 삭제됐다면 어디에도 남지 않는다"는 불변식을 유지하기 위함.
+		try {
+			const { deleteMirror } = await import('$lib/server/photo-store');
+			await deleteMirror(`items/${params.id}/${record.image}`);
+		} catch (cause) {
+			console.error('[photo backup delete]', cause);
+			error(503, '사진 백업 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요');
+		}
 		deleteItem(params.id);
 		return new Response(null, { status: 204 });
 	}
