@@ -1,0 +1,14 @@
+{
+  "providers": {
+    "omlx": {
+      "baseUrl": "http://localhost:9000/v1",
+      "apiKey": "omlx-xxxxxxxxxxxx",
+      "models": [
+        {
+          "id": "default",
+          "name": "Default"
+        }
+      ]
+    }
+  }
+}

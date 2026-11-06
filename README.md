@@ -61,7 +61,7 @@
 - 분석·재분석·보고서는 Qwen(`omlx`)만 실행한다. provider 선택 UI와 레거시 실행·환경변수 지원을 제거했다. 기존 분석 이력과 모델 라벨은 보존한다. [정책 및 검증](docs/qwen-only-analysis.md)을 참고한다.
 - z.ai(GLM)는 Z.AI Coding Plan 엔드포인트의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. 각 LLM의 주소·모델·API 키는 **`user/config/providers.json`** 파일 한 곳에서 관리한다(~/.openclaw 의 `models.providers` 와 같은 형식, 커밋 안 됨). 같은 이름의 환경변수가 있으면 그쪽이 우선하고, 어디에도 키가 없으면 분석이 실패하며 사유가 화면에 표시된다.
 - 세 LLM 모두 같은 지침·분류 체계·스키마·가드레일 검사를 거친다. 결과에는 어느 LLM·모델로 분석했는지(`meta.provider`, `meta.model`)가 남는다.
-- omlx(집 내부망 oMLX 서버, Qwen3.8 27B)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 사진 없이 OCR 텍스트·문제집 정보만으로 분석한다(z.ai와 달리 사진 미전송). 서버가 API 키를 요구하므로 providers.json 의 `omlx.apiKey` 가 필요하다.
+- omlx(집 내부망 oMLX 서버)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 사진 없이 OCR 텍스트·문제집 정보만으로 분석한다(z.ai와 달리 사진 미전송). 모델은 providers.json 의 `omlx.models[0].id` 를 쓰고, 미지정이면 oMLX 모델 alias **`default`**(서버 대시보드에서 실제 모델과 매핑)로 호출한다. 서버가 API 키를 요구하므로 providers.json 의 `omlx.apiKey` 가 필요하다.
 
 ## 여러 LLM 분석 비교 (탭)
 
@@ -155,7 +155,7 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
 | `DATA_DIR` | `./user/data` | 사진·분석 결과 저장 위치 |
 | `STUDENT_NAME` | (비어있음) | 프롬프트와 분석/보고서에서 사용할 학생 이름(예: `지우`). 설정하지 않으면 자연스러운 기본형("학생", "생각 습관")으로 처리된다 |
 | `OMLX_BASE_URL` | `http://192.168.1.9:9000/v1` | oMLX(내부망 OpenAI 호환 서버) 주소. `providers.json` 의 `omlx.baseUrl` 으로도 지정 가능 |
-| `OMLX_MODEL` | `Qwen3.8-27B-8bit` | oMLX에서 쓸 모델. `providers.json` 의 `omlx.models[0].id` 로도 지정 가능 |
+| `OMLX_MODEL` | `default` | oMLX에서 쓸 모델. 기본값은 oMLX 모델 alias `default`(실제 모델은 oMLX 대시보드에서 매핑). `providers.json` 의 `omlx.models[0].id` 로도 지정 가능 |
 | `OMLX_API_KEY` | (없음) | oMLX 서버의 API 키. 보통은 `providers.json` 의 `omlx.apiKey` 를 쓴다. 서버가 키를 요구하므로 어느 쪽에든 필요 |
 | `ANALYZE_TIMEOUT_MS` | `900000` | 분석 시간 제한(15 분 — 로컬 27B 추론 등 느린 모델 감안) |
 | `ANALYZE_MAX_ATTEMPTS` | `2` | 분석 실패 시 총 시도 횟수 |

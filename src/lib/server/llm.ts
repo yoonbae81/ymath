@@ -114,8 +114,8 @@ async function chatCompletion(o: {
 async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
 	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
-	if (!s.omlxBaseUrl || !s.omlxModel)
-		throw new Error('user/config/providers.json 의 omlx 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
+	if (!s.omlxBaseUrl)
+		throw new Error('user/config/providers.json 의 omlx 에 baseUrl 을 채우세요 — 모델은 미지정 시 oMLX alias "default" 를 쓴다');
 	const { omlxBaseUrl, omlxApiKey, omlxModel } = s;
 	const content = await chatCompletion({
 		label: 'oMLX',

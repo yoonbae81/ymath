@@ -20,6 +20,9 @@ export interface LlmProviderConfig {
 
 const providersFile = () => join(configDir(), 'providers.json');
 
+/** oMLX 모델 alias. 실제 모델은 oMLX 대시보드에서 alias 와 매핑하므로 저장소는 모델명을 모른 채 'default' 로 호출한다 */
+export const DEFAULT_OLMX_MODEL = 'default';
+
 /** 설정 파일의 providers 맵. 파일이 없으면 빈 객체, 있지만 깨졌으면 명확히 실패한다 */
 export function readLlmProviders(): Record<string, LlmProviderConfig> {
 	try {
@@ -37,9 +40,10 @@ export const settings = () => {
 	return {
 		/** 실행 provider는 Qwen(oMLX)으로 고정한다. 옛 환경변수는 무시한다. */
 		provider: 'omlx' as Provider,
-		/** 집 내부망 oMLX 서버(OpenAI 호환, Mac에서 MLX 추론). 주소·모델·키 모두 user/config/providers.json 의 omlx 만 본다 — 환경변수 우회나 하드코드 폴백은 없다 */
+		/** 집 내부망 oMLX 서버(OpenAI 호환, Mac에서 MLX 추론). 주소·키는 user/config/providers.json 의 omlx 만 본다 — 환경변수 우회는 없다 */
 		omlxBaseUrl: omlx?.baseUrl,
-		omlxModel: omlx?.models?.[0]?.id,
+		/** 모델은 oMLX 쪽 alias 로 호출한다. providers.json 에 models[0].id 가 없으면 alias 'default' (oMLX 대시보드에서 실제 모델과 매핑) */
+		omlxModel: omlx?.models?.[0]?.id ?? DEFAULT_OLMX_MODEL,
 		omlxApiKey: omlx?.apiKey,
 	// OCR 주소와 키는 별도 설정을 두지 않고 providers.json 의 omlx 를 함께 쓴다. 모델만 환경변수로 바꿀 수 있다
 	ocrModel: process.env.OCR_MODEL?.trim() || 'PaddleOCR-VL-1.6-mlx',

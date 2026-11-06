@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+	DEFAULT_OLMX_MODEL,
 	gradeRank,
 	loadWorkbooks,
 	readLlmProviders,
@@ -144,6 +145,12 @@ describe('user/config/providers.json (LLM 설정)', () => {
 		expect(s.omlxApiKey).toBe('k1');
 		expect(s.omlxBaseUrl).toBe('http://x:9000/v1');
 		expect(s.omlxModel).toBe('m1');
+	});
+
+	it('omlx 모델 미지정 시 oMLX alias default 로 폴백한다', () => {
+		write({ providers: { omlx: { baseUrl: 'http://x:9000/v1', apiKey: 'k1' } } });
+		expect(settings().omlxModel).toBe('default');
+		expect(DEFAULT_OLMX_MODEL).toBe('default');
 	});
 
 	it('레거시 provider 설정과 환경변수를 무시한다', () => {
