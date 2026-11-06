@@ -43,7 +43,7 @@ export const settings = () => {
 		omlxApiKey: omlx?.apiKey,
 	// OCR 주소와 키는 별도 설정을 두지 않고 providers.json 의 omlx 를 함께 쓴다. 모델만 환경변수로 바꿀 수 있다
 	ocrModel: process.env.OCR_MODEL?.trim() || 'PaddleOCR-VL-1.6-mlx',
-	// 15 분. 로컬 35B-A3B(oMLX Qwen3.6) 같은 느린 모델은 로드+추론만 수 분이 걸린다
+	// 15 분. 로컬 27B(oMLX Qwen3.8) 같은 느린 모델은 로드+추론만 수 분이 걸린다
 	analyzeTimeoutMs: Number(process.env.ANALYZE_TIMEOUT_MS ?? 15 * 60_000),
 	ocrTimeoutMs: Number(process.env.OCR_TIMEOUT_MS ?? 2 * 60_000),
 		maxAttempts: Number(process.env.ANALYZE_MAX_ATTEMPTS ?? 2),
