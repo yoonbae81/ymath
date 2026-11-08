@@ -1,3 +1,5 @@
+# DO-NOT-DEPLOY — Worker "math"는 2026-11-08 삭제됐다. xcv.kr/math 는 edge Caddy(xcv.kr site의 /math/* handle)가
+# s3 박스(10.0.0.9:3141)로 서빙한다. 이 설정으로 `wrangler deploy` 하면 Worker가 재생성되어 라우트를 다시 가져간다.
 name = "math"
 main = ".svelte-kit/cloudflare/_worker.js"
 compatibility_date = "2026-10-17"
