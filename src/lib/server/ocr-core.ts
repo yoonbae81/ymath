@@ -7,7 +7,7 @@ export const OCR_SYSTEM_PROMPT =
 export const OCR_USER_TEXT =
 	'이미지의 모든 텍스트와 수식을 원문 순서대로 정확히 판독해 Markdown 본문만 출력하세요. 설명·요약·코드 펜스는 추가하지 마세요.';
 
-/** oMLX 0.6.4 는 base64 data URI 만 받는다(omlx/utils/image.py 가 원격 URL·파일 경로를 명시적으로 거부). */
+/** GLM 비전 모델(z.ai)은 base64 data URL 로 이미지를 받는다. */
 export function buildOcrMessages(base64: string): { role: 'system' | 'user'; content: unknown }[] {
 	return [
 		{ role: 'system', content: OCR_SYSTEM_PROMPT },

@@ -34,7 +34,7 @@ export async function generateReportFromSnapshot(input:{report:ReportRecord;reco
  if(!raw.trim()) throw new Error('report.md 지침 파일이 비어 있습니다');
  const guideline=renderPrompt(raw);
  const prompt=buildReportPrompt({guideline,topic:report.topic,periodLabel:report.period_label,summary,items:targets});
- const provider='omlx';
+ const provider='glm';
  const response=fixture ? await fixture.runner(prompt,provider) : await runText(provider,prompt);
  if(!response.text.trim()) throw new Error('보고서 본문이 비어 있습니다');
  let publishers=targets.map(r=>r.workbook.publisher).filter(Boolean);

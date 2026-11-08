@@ -126,26 +126,27 @@ describe('POST /api/items/[id]/retry', () => {
 		expect(readRecord(r.id)).toMatchObject({ status: 'done' });
 		expect(enqueue).not.toHaveBeenCalled();
 
-		expect((await withProvider('omlx')).status).toBe(202);
-		expect(readRecord(r.id)).toMatchObject({ status: 'queued', requested_provider: 'omlx' });
+		expect((await withProvider('glm')).status).toBe(202);
+		expect(readRecord(r.id)).toMatchObject({ status: 'queued', requested_provider: 'glm' });
 		expect(enqueue).toHaveBeenCalledWith(r.id);
 
 		// 삭제된 provider는 done/failed 상태에서도 거부한다
 		updateRecord(r.id, (x) => {
 			x.status = 'done';
 		});
-		await expect(withProvider('agy')).resolves.toMatchObject({ status: 202 });
-		expect(readRecord(r.id)!.requested_provider).toBe('agy');
+		await expect(withProvider('agy')).rejects.toMatchObject({ status: 400 });
+		await expect(withProvider('omlx')).rejects.toMatchObject({ status: 400 });
+		expect(readRecord(r.id)!.requested_provider).toBe('glm');
 	});
 
-	it('provider를 생략하면 과거 선택 대신 Qwen으로 재분석한다', async () => {
+	it('provider를 생략하면 과거 선택 대신 GLM으로 재분석한다', async () => {
 		const r = createItem(WB);
 		updateRecord(r.id, (x) => {
 			x.status = 'failed';
 			x.requested_provider = 'codex';
 		});
 		await call(r.id);
-		expect(readRecord(r.id)!.requested_provider).toBe('omlx');
+		expect(readRecord(r.id)!.requested_provider).toBe('glm');
 	});
 
 	it('이미 대기·진행 중이면 409, 없으면 404, 헤더가 없으면 403', async () => {

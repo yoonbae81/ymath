@@ -14,7 +14,7 @@ export const PROVIDERS = Object.keys(catalog.providers) as string[];
 export const batonCatalog = catalog;
 
 /** 기본 (하향 호환) provider id. 명시적 선택 없이 호출되면 이 값으로 실행. */
-export const batonDefaultProvider = PROVIDERS[0] ?? 'omlx';
+export const batonDefaultProvider = PROVIDERS[0] ?? 'glm';
 
 /**
  * catalog 매핑 — provider id → Runner profile id.

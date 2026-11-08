@@ -8,7 +8,7 @@ import type { RequestHandler } from './$types';
 export const POST: RequestHandler = async ({ params, request, url, getClientAddress, platform }) => {
 	requireAjax(request);
 	const provider = url.searchParams.get('provider');
-	if (provider !== null && provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
+	if (provider !== null && provider !== 'glm') error(400, 'GLM(glm)만 사용할 수 있습니다');
 	// OWASP ASVS V2.4.1: 상태 변경 API 속도 제한(IP 당)
 	requireMutationRate(getClientAddress, request);
 	if (!/^[0-9]{8}-[0-9]{6}-rep-[a-z0-9]{4}$/.test(params.id)) error(400, '잘못된 보고서 ID 형식입니다');

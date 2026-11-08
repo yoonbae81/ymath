@@ -18,8 +18,8 @@ beforeEach(() => {
 	work = mkdtempSync(join(tmpdir(), 'ymath-prov-'));
 	process.env.DATA_DIR = join(work, 'data'); // knownPatternIds 가 읽는다(비어 있음)
 	process.env.CONFIG_DIR = work; // 실제 user/config/providers.json 이 테스트에 새지 않게 한다
-	// z.ai 경로는 키가 없으면 호출 전에 실패하므로 기본 케이스에선 키를 준다. omlx 는 providers.json 픽스처로 지정한다(단일 소스)
-	writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', apiKey: 'test-key', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
+	// z.ai(GLM) 단일 설정 — providers.json 의 zai 항목이 유일한 설정 출처다
+	writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4', apiKey: 'test-key', models: [{ id: 'glm-5.3-flash' }] } } }));
 	writeFileSync(join(work, 'image.jpg'), 'img');
 	writeFileSync(join(work, 'out.json'), JSON.stringify(validAnalysis()));
 	vi.stubGlobal(
@@ -48,13 +48,13 @@ afterEach(() => {
 
 const run = (r: ItemRecord) => analyzeItem({ record: r, dir: work, ocrText: '$x$' });
 
-describe('Qwen 분석 HTTP', () => {
-	it('기본값은 omlx(Qwen3.6 35B-A3B)', async () => {
-		expect(providerFor(record())).toBe('omlx');
+describe('GLM 분석 HTTP', () => {
+	it('기본값은 glm(glm-5.3-flash)', async () => {
+		expect(providerFor(record())).toBe('glm');
 		const res = await run(record());
-		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.6-35B-A3B' });
+		expect(res).toMatchObject({ provider: 'glm', model: 'glm-5.3-flash' });
 	});
-	it('omlx 로 분석하면 oMLX 엔드포인트를 호출하고 모델·스키마 지시가 담긴다', async () => {
+	it('glm 으로 분석하면 z.ai 엔드포인트를 호출하고 모델·스키마 지시가 담긴다', async () => {
 		let capturedUrl = '';
 		let capturedBody: any;
 		vi.stubGlobal(
@@ -72,12 +72,16 @@ describe('Qwen 분석 HTTP', () => {
 				} as any;
 			})
 		);
-		const res = await run(record('omlx'));
-		expect(res).toMatchObject({ provider: 'omlx', model: 'Qwen3.6-35B-A3B', taxonomyIssues: [], guardrailWarnings: [] });
-		expect(capturedUrl).toBe('http://omlx.test/v1/chat/completions');
-		expect(capturedBody.model).toBe('Qwen3.6-35B-A3B');
-		expect(capturedBody.response_format).toEqual({ type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema: expect.any(Object) } });
-		// Qwen3.6 은 멀티모달 — 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
+		const res = await run(record('glm'));
+		expect(res).toMatchObject({ provider: 'glm', model: 'glm-5.3-flash', taxonomyIssues: [], guardrailWarnings: [] });
+		expect(capturedUrl).toBe('https://zai.test/api/coding/paas/v4/chat/completions');
+		expect(capturedBody.model).toBe('glm-5.3-flash');
+		// z.ai 코딩 엔드포인트는 json_object response_format 을 검증했다. 프롬프트 스키마는 보조 수단.
+		expect(capturedBody.response_format).toEqual({ type: 'json_object' });
+		// flash 계열은 추론 강제라 thinking 필드를 보내지 않는다
+		expect(capturedBody.thinking).toBeUndefined();
+		expect(capturedBody.max_tokens).toBe(16384);
+		// GLM 비전 모델은 사진을 base64 data URL 로 첨부하고 첨부 안내가 프롬프트에 들어간다
 		const parts = capturedBody.messages[1].content as any[];
 		expect(parts).toHaveLength(2);
 		expect(parts[0].type).toBe('image_url');
@@ -86,11 +90,11 @@ describe('Qwen 분석 HTTP', () => {
 		expect(parts[1].text).toContain('첨부된 이미지');
 		expect(parts[1].text).toContain('준수해야 할 JSON Schema');
 	});
-	it('providers.json 의 omlx 에 apiKey 가 없으면 oMLX 를 호출하지 않고 사유를 알린다', async () => {
-		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
+	it('providers.json 의 zai 에 apiKey 가 없으면 z.ai 를 호출하지 않고 사유를 알린다', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4', models: [{ id: 'glm-5.3-flash' }] } } }));
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
-		await expect(run(record('omlx'))).rejects.toThrow(/oMLX API 키가 설정되지 않았습니다/);
+		await expect(run(record('glm'))).rejects.toThrow(/Z\.AI API 키가 설정되지 않았습니다/);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });

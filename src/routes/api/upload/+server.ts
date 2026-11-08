@@ -15,7 +15,7 @@ const MAX_UPLOAD_SIZE = 25 * 1024 * 1024; // 25MB (OWASP ASVS V5.2.1)
 export const POST: RequestHandler = async ({ request, url, getClientAddress, platform }) => {
 	requireAjax(request);
 	const provider = url.searchParams.get('provider');
-	if (provider !== null && provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
+	if (provider !== null && provider !== 'glm') error(400, 'GLM(glm)만 사용할 수 있습니다');
 	// OWASP ASVS V2.4.1: 상태 변경 API 속도 제한(IP 당)
 	requireMutationRate(getClientAddress, request);
 	const type = request.headers.get('content-type') ?? '';

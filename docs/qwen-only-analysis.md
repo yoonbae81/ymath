@@ -1,5 +1,7 @@
 # Qwen 전용 분석·보고서
 
+> **2026-11 갱신**: 이 정책은 GLM(z.ai) 단일 provider 전환으로 대체됐다. 현재 기준은 [glm-only-analysis.md](glm-only-analysis.md) 를 참고한다. 아래는 당시(qwen 전용) 기록이다.
+
 ## 기준
 
 - 새 분석, 재분석, 보고서 작성의 실행 provider ID는 `omlx` 하나다. 화면에는 Qwen을 표시한다.

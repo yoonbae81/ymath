@@ -1,7 +1,7 @@
 /** 순수(pure) LLM 메시지·파싱 로직 — node:fs 없이 Worker 번들에서 import 가능하다.
  * llm.ts 가 같은 것들을 재노출하므로 기존 공개 계약은 그대로다. */
 
-/** OpenAI 호환 멀티모달 콘텐츠 파트. Qwen 비전 모델은 image_url 에 공개 URL 이나 base64 data URL 을 받는다 */
+/** OpenAI 호환 멀티모달 콘텐츠 파트. GLM 비전 모델은 image_url 에 공개 URL 이나 base64 data URL 을 받는다 */
 export type ChatContentPart = { type: 'image_url'; image_url: { url: string } } | { type: 'text'; text: string };
 
 export const MATH_COACH_SYSTEM =
@@ -10,7 +10,7 @@ export const MATH_COACH_SYSTEM =
 export const promptWithSchema = (prompt: string, schema: object) =>
 	`${prompt}\n\n---\n# 준수해야 할 JSON Schema\n${JSON.stringify(schema, null, 2)}\n\n위 JSON Schema에 정확히 맞는 유효한 JSON 객체 하나만 출력하세요.`;
 
-/** image bytes 를 base64 data URL 로 첨부한 멀티모달 user 메시지(Qwen). oMLX 0.6.4 는 base64 data URI 만 받는다. */
+/** image bytes 를 base64 data URL 로 첨부한 멀티모달 user 메시지(GLM 비전 모델). */
 export const imageUserMessage = (base64: string, prompt: string): { role: 'user'; content: ChatContentPart[] } => ({
 	role: 'user',
 	content: [
@@ -69,7 +69,7 @@ export function firstJsonObject(text: string): string | null {
 
 /**
  * 코드펜스로 감싸진 경우, 심지어 모델의 thinking 이 본문에 섞인 경우에도 JSON 을 건진다.
- * oMLX 의 Qwen 계열은 reasoning 을 content 에 그대로 출력하는 일이 있다.
+ * 추론 모델은 reasoning 을 content 에 그대로 출력하는 일이 있다.
  */
 export function parseJsonBody(label: string, text: string): unknown {
 	const body = text

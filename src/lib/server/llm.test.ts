@@ -23,37 +23,59 @@ afterEach(() => {
 
 const call = () => ({ prompt: '프롬프트 본문', schema: SCHEMA, dir: work, imagePath: join(work, 'work.jpg') });
 
-describe('Qwen HTTP와 공통 JSON/스키마', () => {
-	it('omlx: OpenAI 호환 엔드포인트로 본문을 받는다', async () => {
-		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', apiKey: 'k', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
+describe('GLM HTTP와 공통 JSON/스키마', () => {
+	it('glm: OpenAI 호환 엔드포인트로 본문을 받는다', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4', apiKey: 'test-key', models: [{ id: 'glm-5.3-flash' }] } } }));
 		let url = '';
 		let body: any;
+		let headers: Record<string, string> = {};
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async (u: string, opts: any) => {
 				url = u;
+				headers = opts.headers;
 				body = JSON.parse(opts.body);
 				return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '보고서 본문' } }] }) };
 			})
 		);
-		const r = await runText('omlx', '써 줘');
-		expect(r).toEqual({ text: '보고서 본문', model: 'Qwen3.6-35B-A3B' });
-		expect(url).toBe('http://omlx.test/v1/chat/completions');
-		expect(body.model).toBe('Qwen3.6-35B-A3B');
+		const r = await runText('glm', '써 줘');
+		expect(r).toEqual({ text: '보고서 본문', model: 'glm-5.3-flash' });
+		expect(url).toBe('https://zai.test/api/coding/paas/v4/chat/completions');
+		expect(headers.Authorization).toBe('Bearer test-key');
+		expect(body.model).toBe('glm-5.3-flash');
 		// 본문 요청에는 JSON 모드를 쓰지 않는다
 		expect(body.response_format).toBeUndefined();
 		expect(body.messages).toEqual([{ role: 'user', content: '써 줘' }]);
+		// flash 계열은 추론 강제라 thinking 을 끄는 필드를 보내지 않는다
+		expect(body.thinking).toBeUndefined();
 	});
-	it('omlx: 키가 없으면 호출하지 않고 오류', async () => {
-		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'http://omlx.test/v1', models: [{ id: 'Qwen3.6-35B-A3B' }] } } }));
-		await expect(runText('omlx', 'x')).rejects.toThrow(/oMLX API 키가 설정되지 않았습니다/);
+	it('glm: 텍스트 전용 모델이면 thinking 을 끈다', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4', apiKey: 'test-key', models: [{ id: 'glm-5.3' }] } } }));
+		let body: any;
+		vi.stubGlobal('fetch', vi.fn(async (_u: string, opts: any) => {
+			body = JSON.parse(opts.body);
+			return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '본문' } }] }) };
+		}));
+		await runText('glm', 'x');
+		expect(body.thinking).toEqual({ type: 'disabled' });
+	});
+	it('glm: 키가 없으면 호출하지 않고 오류', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4', models: [{ id: 'glm-5.3-flash' }] } } }));
+		await expect(runText('glm', 'x')).rejects.toThrow(/Z\.AI API 키가 설정되지 않았습니다/);
+	});
+	it('glm: 미지정 provider 는 거부한다', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		await expect(runStructured('omlx' as never, call())).rejects.toThrow('사용할 수 없는 LLM 입니다: omlx');
+		await expect(runText('agy' as never, 'x')).rejects.toThrow('사용할 수 없는 LLM 입니다: agy');
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 	it('parseJsonBody: thinking 이 섞인 출력에서도 첫 균형 객체를 건진다', () => {
 		const noisy = "We need answer user's request: produce valid JSON only. Need think.\n{\"a\":\"결과\"}";
-		expect(parseJsonBody('oMLX', noisy)).toEqual({ a: '결과' });
+		expect(parseJsonBody('zai', noisy)).toEqual({ a: '결과' });
 		// 문자열 안의 중괄호는 객체 경계가 아니다
 		expect(firstJsonObject('{"s":"안에 { 있음"}')).toBe('{"s":"안에 { 있음"}');
-		expect(() => parseJsonBody('oMLX', '생각만 하고 브레이스 없이 끝남')).toThrow(/JSON 이 아님/);
+		expect(() => parseJsonBody('zai', '생각만 하고 브레이스 없이 끝남')).toThrow(/JSON 이 아님/);
 	});
 	it('분석 스키마의 모든 객체가 OpenAI strict 요건을 만족한다', () => {
 		const bad: string[] = [];

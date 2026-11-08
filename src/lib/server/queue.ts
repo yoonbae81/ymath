@@ -18,7 +18,7 @@ export interface QueueDeps {
 }
 
 /**
- * 프로세스 내 Qwen 단일 레인 큐. 과거 provider 요청도 같은 GPU에서 직렬 처리한다. 상태는 record.json 에
+ * 프로세스 내 GLM 단일 레인 큐. 과거 provider 요청도 같은 레인에서 직렬 처리한다. 상태는 record.json 에
  * 있으므로 서버가 재시작돼도 recover() 로 이어간다. 상태: queued → ocr → analyzing → done | failed
  */
 export class JobQueue {

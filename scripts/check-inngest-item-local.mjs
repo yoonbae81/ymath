@@ -52,7 +52,7 @@ try {
     const jpg=Buffer.from(parts[0].image_url.url.split(',')[1],'base64');
     const meta=await sharp(jpg).metadata();assert.equal(meta.format,'jpeg');assert.equal(meta.width,320);assert.equal(meta.height,1600);
     const pixels=await sharp(jpg).removeAlpha().raw().toBuffer();for(let j=0;j<pixels.length;j+=3){assert.equal(pixels[j],pixels[j+1]);assert.equal(pixels[j+1],pixels[j+2]);}
-    const isOcr=op.opts.body.model==='PaddleOCR-VL-1.6-mlx';
+    const isOcr=op.opts.body.model==='glm-4.6v';
     if(!isOcr){assert.match(parts[1].text,/준수해야 할 JSON Schema/);assert.ok(parts[1].text.includes(ocr.trim()? 'SYNTHETIC-OCR-MARKER':'OCR 결과 없음'));}
     const content=isOcr?ocr:JSON.stringify(analysis);
     steps[op.id]={type:'data',data:{choices:[{finish_reason:'stop',message:{content}}]}};response=await call();

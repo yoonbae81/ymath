@@ -22,7 +22,7 @@ afterEach(() => {
 
 const okDeps = (over: Partial<QueueDeps> = {}): QueueDeps => ({
 	ocr: async () => '$x^2$',
-	analyze: async () => ({ analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] }),
+	analyze: async () => ({ analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] }),
 	maxAttempts: 2,
 	...over
 });
@@ -40,7 +40,7 @@ describe('JobQueue', () => {
 				analyze: async ({ ocrText }) => {
 					seen.push(readRecord(item.id)!.status);
 					expect(ocrText).toBe('$x^2$');
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'abc12345', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -51,7 +51,7 @@ describe('JobQueue', () => {
 		const r = readRecord(item.id)!;
 		expect(r).toMatchObject({ status: 'done', error: null, attempts: 1 });
 		expect(r.analysis).toEqual(fakeAnalysis);
-		expect(r.meta).toMatchObject({ provider: 'omlx', model: 'Qwen-fixture', prompt_version: 'abc12345' });
+		expect(r.meta).toMatchObject({ provider: 'glm', model: 'Qwen-fixture', prompt_version: 'abc12345' });
 		expect(r.flags).toEqual({ ocr_missing: false, taxonomy_mismatch: [], guardrail: [] });
 		expect(readFileSync(join(itemDir(item.id), 'ocr.md'), 'utf8')).toBe('$x^2$');
 	});
@@ -66,7 +66,7 @@ describe('JobQueue', () => {
 				},
 				analyze: async ({ ocrText }) => {
 					gotOcr = ocrText;
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -85,7 +85,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async () => {
 					if (++calls === 1) throw new Error('일시 오류');
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -103,7 +103,7 @@ describe('JobQueue', () => {
 				analyze: async ({ hint }) => {
 					hints.push(hint);
 					if (hints.length === 1) throw new Error('정답 노출 가드레일 위반: 넛지 Q1에 등식이 있음');
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: ['질문 형태가 아님'] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: ['질문 형태가 아님'] };
 				}
 			})
 		);
@@ -121,11 +121,11 @@ describe('JobQueue', () => {
 			created_at: '2026-10-05T01:00:00.000Z',
 			analyzed_at: '2026-10-05T00:00:00.000Z',
 			prompt_version: 'oldprompt',
-			provider: 'omlx',
+			provider: 'glm',
 			model: 'old-model'
 		};
 		updateRecord(item.id, (r) => {
-			r.meta = { provider: 'omlx', model: 'old-model', prompt_version: 'oldprompt', analyzed_at: current.analyzed_at };
+			r.meta = { provider: 'glm', model: 'old-model', prompt_version: 'oldprompt', analyzed_at: current.analyzed_at };
 			r.feedback = [
 				{ ...current, choice: 'accurate', comment: '', analyzed_at: '2026-10-04T00:00:00.000Z' },
 				current
@@ -136,7 +136,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async ({ feedback }) => {
 					got = feedback;
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'new-model', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'new-model', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -165,7 +165,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async () => ({
 					analysis: fakeAnalysis,
-					provider: 'omlx',
+					provider: 'glm',
 					model: 'Qwen-fixture',
 					promptVersion: 'p',
 					taxonomyIssues: ["단원 'X'은 '기하' 영역인데 topic이 '대수'"],
@@ -193,7 +193,7 @@ describe('JobQueue', () => {
 				},
 				analyze: async ({ ocrText }) => {
 					gotOcr = ocrText;
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -217,7 +217,7 @@ describe('JobQueue', () => {
 					order.push(record.id);
 					await new Promise((r) => setTimeout(r, 20));
 					active--;
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -247,7 +247,7 @@ describe('JobQueue', () => {
 					maxActive = Math.max(maxActive, active);
 					await new Promise((r) => setTimeout(r, 20));
 					active--;
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -265,10 +265,10 @@ describe('JobQueue', () => {
 		q.enqueue(item.id);
 		await q.idle();
 
-		expect(readdirSync(itemDir(item.id))).toContain('analysis-omlx.json');
-		const saved = JSON.parse(readFileSync(join(itemDir(item.id), 'analysis-omlx.json'), 'utf8'));
+		expect(readdirSync(itemDir(item.id))).toContain('analysis-glm.json');
+		const saved = JSON.parse(readFileSync(join(itemDir(item.id), 'analysis-glm.json'), 'utf8'));
 		expect(saved.analysis).toEqual(fakeAnalysis);
-		expect(saved.meta).toMatchObject({ provider: 'omlx', model: 'Qwen-fixture' });
+		expect(saved.meta).toMatchObject({ provider: 'glm', model: 'Qwen-fixture' });
 		expect(listAnalyses(item.id)).toHaveLength(1);
 	});
 
@@ -287,7 +287,7 @@ describe('JobQueue', () => {
 			okDeps({
 				analyze: async ({ record }) => {
 					order.push(record.id);
-					return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+					return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 				}
 			})
 		);
@@ -318,7 +318,7 @@ describe('JobQueue', () => {
 			analyze: async () => {
 				calls++;
 				if (calls === 1) throw new QuotaExceededError('rate limit 429', 429);
-				return { analysis: fakeAnalysis, provider: 'omlx', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
+				return { analysis: fakeAnalysis, provider: 'glm', model: 'Qwen-fixture', promptVersion: 'p', taxonomyIssues: [], guardrailWarnings: [] };
 			},
 			maxAttempts: 2
 		});

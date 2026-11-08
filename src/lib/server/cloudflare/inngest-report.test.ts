@@ -6,7 +6,7 @@ import { buildInngestReportRequest, completeInngestReport } from './inngest-repo
 const workbook = { id: 'ssen-m3-2', name: '쎈 중3-2', publisher: '쎈', grade: '중3', semester: 2 };
 function item(id: string, created_at: string): ItemRecord {
 	const analysis = validAnalysis(); analysis.problem.number_guess = '0255';
-	return { schema_version: 1, id, created_at, status: 'done', error: null, attempts: 1, workbook, image: 'image.jpg', flags: { ocr_missing: false, taxonomy_mismatch: [], guardrail: [] }, analysis: analysis as ItemRecord['analysis'], meta: { provider: 'omlx', model: 'fixture', prompt_version: 'fixture', analyzed_at: created_at } };
+	return { schema_version: 1, id, created_at, status: 'done', error: null, attempts: 1, workbook, image: 'image.jpg', flags: { ocr_missing: false, taxonomy_mismatch: [], guardrail: [] }, analysis: analysis as ItemRecord['analysis'], meta: { provider: 'glm', model: 'fixture', prompt_version: 'fixture', analyzed_at: created_at } };
 }
 const report: ReportRecord = { schema_version: 1, id: '20261017-080000-rep-abcd', created_at: '2026-10-17T08:00:00Z', topic: '대수', period: '2026-10', period_label: '2026-10', status: 'generating', error: null, attempts: 1, item_ids: [], items_fingerprint: '', summary: null, markdown: null, meta: null };
 

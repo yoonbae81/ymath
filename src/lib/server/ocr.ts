@@ -7,16 +7,17 @@ import { buildOcrMessages, markdownFromOcrResponse } from './ocr-core';
 export { cleanOcrMarkdown } from './ocr-core';
 
 /**
- * providers.json 의 omlx OpenAI 호환 API로 image.jpg 를 Markdown 으로 바꾼다.
- * PaddleOCR-VL 판독 위치 토큰(<|LOC_n|>)은 분석에 불필요한 노이즈라 치운다.
+ * providers.json 의 zai(z.ai, OpenAI 호환) API로 image.jpg 를 Markdown 으로 바꾼다.
+ * 모델은 settings().ocrModel(기본 glm-4.6v). PaddleOCR-VL 판독 위치 토큰(<|LOC_n|>)은
+ * 남아 있어도 분석에 불필요한 노이즈라 치운다.
  */
 export async function runOcr(dir: string): Promise<string> {
 	const s = settings();
-	const omlx = readLlmProviders().omlx;
-	const baseUrl = omlx?.baseUrl?.trim();
-	const apiKey = omlx?.apiKey?.trim();
+	const zai = readLlmProviders().zai;
+	const baseUrl = zai?.baseUrl?.trim();
+	const apiKey = zai?.apiKey?.trim();
 	if (!baseUrl || !apiKey) {
-		throw new Error('OCR 서버 설정이 없음: user/config/providers.json 의 omlx baseUrl·apiKey 를 확인하세요');
+		throw new Error('OCR 서버 설정이 없음: user/config/providers.json 의 zai baseUrl·apiKey 를 확인하세요');
 	}
 	const image = readFileSync(join(dir, IMAGE_FILE)).toString('base64');
 	const controller = new AbortController();

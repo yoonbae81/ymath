@@ -56,12 +56,11 @@
 - 같은 분석에 다시 답하면 덮어쓰고, **다시 분석**하면 이전 반응은 남긴 채 새 분석에 대한 답을 새로 받는다. 분석 중·실패 항목에는 남길 수 없다(409).
 - 선택은 읽었다는 강한 증거는 아니다(아무거나 눌러도 저장됨). 스크롤·체류 시간은 기록하지 않는다.
 
-## LLM 선택 (GLM / Codex / Agy)
+## LLM 선택 (GLM 단일)
 
-- 분석·재분석·보고서는 Qwen(`omlx`)만 실행한다. provider 선택 UI와 레거시 실행·환경변수 지원을 제거했다. 기존 분석 이력과 모델 라벨은 보존한다. [정책 및 검증](docs/qwen-only-analysis.md)을 참고한다.
-- z.ai(GLM)는 Z.AI Coding Plan 엔드포인트의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. 각 LLM의 주소·모델·API 키는 **`user/config/providers.json`** 파일 한 곳에서 관리한다(~/.openclaw 의 `models.providers` 와 같은 형식, 커밋 안 됨). 같은 이름의 환경변수가 있으면 그쪽이 우선하고, 어디에도 키가 없으면 분석이 실패하며 사유가 화면에 표시된다.
-- 세 LLM 모두 같은 지침·분류 체계·스키마·가드레일 검사를 거친다. 결과에는 어느 LLM·모델로 분석했는지(`meta.provider`, `meta.model`)가 남는다.
-- omlx(집 내부망 oMLX 서버)는 OpenAI 호환 `/v1/chat/completions`로 호출하며 사진 없이 OCR 텍스트·문제집 정보만으로 분석한다(z.ai와 달리 사진 미전송). 모델은 providers.json 의 `omlx.models[0].id` 를 쓰고, 미지정이면 oMLX 모델 alias **`default`**(서버 대시보드에서 실제 모델과 매핑)로 호출한다. 서버가 API 키를 요구하므로 providers.json 의 `omlx.apiKey` 가 필요하다.
+- 분석·재분석·보고서·OCR은 GLM(z.ai) 하나만 실행한다. 실행 provider ID는 `glm`이고 provider 선택 UI와 레거시 실행·환경변수 지원은 없다. 기존 분석 이력과 모델 라벨(omlx·zai·codex·agy·claude)은 보존한다. [정책 및 검증](docs/glm-only-analysis.md)을 참고한다.
+- z.ai GLM은 코딩 엔드포인트(`https://api.z.ai/api/coding/paas/v4`)의 chat/completions로 호출하며 JSON 모드(`response_format: json_object`)로 답을 받는다. 분석 기본 모델은 `glm-5.3-flash`(사진 base64 data URL 첨부가 되는 비전 모델). 주소·모델·API 키는 **`user/config/providers.json`** 파일 한 곳에서 관리한다(커밋 안 됨). 환경변수 우회는 없고, 키가 없으면 분석이 실패하며 사유가 화면에 표시된다.
+- OCR은 같은 z.ai 설정에서 비전 모델 `glm-4.6v`(기본, `OCR_MODEL` 로만 모델 교체 가능)로 image.jpg 를 Markdown 으로 바꾼다. Mac oMLX·PaddleOCR 서버 의존은 없다.
 
 ## 여러 LLM 분석 비교 (탭)
 
@@ -77,11 +76,11 @@
 
 ```
 사진 → 축소(긴 변 1600px) + 그레이스케일 JPEG → image.jpg (OCR·LLM 입력과 보관·표시를 겸함)
-     → oMLX chat/completions(OCR: PaddleOCR-VL) → ocr.md
-     → Qwen(oMLX)에 사진 + OCR + 지침 + 분류 체계 → record.json
+     → z.ai chat/completions(OCR: glm-4.6v) → ocr.md
+     → GLM(z.ai, glm-5.3-flash)에 사진 + OCR + 지침 + 분류 체계 → record.json
 ```
 
-- 큐는 과거 provider 요청도 Qwen 단일 레인에서 직렬로 처리한다. 서버가 재시작돼도 `record.json`의 상태로 이어서 처리한다.
+- 큐는 과거 provider 요청도 GLM 단일 레인에서 직렬로 처리한다. 서버가 재시작돼도 `record.json`의 상태로 이어서 처리한다.
 - 분석이 끝나면 항목 폴더에 `analysis-<llm>.json`(예: `analysis-zai.json`)으로 프로바이더별로 남긴다. 같은 LLM으로 다시 분석하면 덮어쓰고, 다른 LLM으로 분석하면 파일이 늘어나 `/items` 상세에서 탭으로 전환해 볼 수 있다. `record.json`의 `analysis`는 마지막 분석(목록·보고서·통계는 이것을 쓴다).
 - OCR이 실패해도 사진만으로 분석을 계속한다(`flags.ocr_missing`).
 - 문제 1개당 `user/data/items/<id>/`: `record.json`, `image.jpg`(개당 약 150KB), `ocr.md`, `analysis-<llm>.json`. 원본은 저장하지 않는다.
@@ -98,7 +97,7 @@ src/, static/    소스
 
 ## 실행
 
-요구: Node 20+, 각 LLM 주소·API 키(`user/config/providers.json` 에 입력), OCR과 omlx 분석용 OpenAI 호환 oMLX 서버가 필요하다.
+요구: Node 20+, z.ai GLM 주소·API 키(`user/config/providers.json` 의 `zai` 항목에 입력) 하나면 충분하다. 분석·OCR이 모두 이 설정으로 돈다.
 
 ```sh
 npm install
@@ -142,8 +141,8 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
   ```
   `analyzing` 이 2 이상이면 프로바이더가 서로 다른 항목이 동시에 돌고 있는 것이다(정상). `queued` 가 쌓여 있으면 그 프로바이더의 흐름이 막힌 것이다.
 - **base 경로를 빼먹으면 404**: 앱은 `/math` 아래에 있으므로 상태 확인도 `curl http://127.0.0.1:3141/math/items` 처럼 경로에 `/math` 이 들어가야 한다. 루트로 조회하면 404 가 뜨고, 그 404 는 경로 착각이지 장애가 아니다.
-- **`fetch failed`**: OCR과 omlx 분석은 `user/config/providers.json`의 같은 `omlx.baseUrl`을 쓴다. 이 서버가 죽거나 주소가 틀리면 OCR은 사진만으로 계속 진행하지만 omlx 분석은 실패한다. 서버와 주소가 정상화된 뒤 `/items`에서 **다시 분석** 하면 된다.
-- **`분석 시간 초과(900초)`**: omlx 처럼 느린 로컬 모델이 이 한도를 넘으면 실패로 기록되고 1회 자동 재시도한다(`ANALYZE_MAX_ATTEMPTS`, 기본 2). 한도가 모자라면 `ANALYZE_TIMEOUT_MS` 를 올리되, 느린 원인을 먼저 확인한다(서버 부하·모델 교체).
+- **`fetch failed`**: 분석과 OCR은 `user/config/providers.json`의 같은 `zai.baseUrl`(z.ai)을 쓴다. 네트워크가 막히면 OCR은 사진만으로 계속 진행하지만 분석은 실패한다. 정상화된 뒤 `/items`에서 **다시 분석** 하면 된다.
+- **`분석 시간 초과(900초)`**: 이 한도를 넘으면 실패로 기록되고 1회 자동 재시도한다(`ANALYZE_MAX_ATTEMPTS`, 기본 2). 한도가 모자라면 `ANALYZE_TIMEOUT_MS` 를 올린다.
 - **`정답 노출 가드레일 위반`**: LLM 결과에 정답·등식이 섞여 저장하지 않고, 위반 사유를 힌트로 주어 1회 자동 재지도로 다시 돌린다. 두 번 다 실패하면 `failed` 로 남고 사유가 화면에 보인다.
 - **재시도 큐 되돌리기**: `failed` 항목이 한꺼번에 쌓였을 때 서버를 재시작해도 `queued` 로 되돌아가지 않는다(재시작은 진행 중 항목만 회수한다). 그럴 때는 항목 `record.json` 을 `queued` 로 되돌린 뒤 서비스를 재시작한다.
 - **비밀값**: `user/config/providers.json` 과 `~/.config/ymath.env` 에 API 키·비밀번호가 있다. 로그나 문서에 값이 새지 않게 하고, 커밋 대상이 아니다.
@@ -154,12 +153,9 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
 | --- | --- | --- |
 | `DATA_DIR` | `./user/data` | 사진·분석 결과 저장 위치 |
 | `STUDENT_NAME` | (비어있음) | 프롬프트와 분석/보고서에서 사용할 학생 이름(예: `지우`). 설정하지 않으면 자연스러운 기본형("학생", "생각 습관")으로 처리된다 |
-| `OMLX_BASE_URL` | `http://192.168.1.9:9000/v1` | oMLX(내부망 OpenAI 호환 서버) 주소. `providers.json` 의 `omlx.baseUrl` 으로도 지정 가능 |
-| `OMLX_MODEL` | `default` | oMLX에서 쓸 모델. 기본값은 oMLX 모델 alias `default`(실제 모델은 oMLX 대시보드에서 매핑). `providers.json` 의 `omlx.models[0].id` 로도 지정 가능 |
-| `OMLX_API_KEY` | (없음) | oMLX 서버의 API 키. 보통은 `providers.json` 의 `omlx.apiKey` 를 쓴다. 서버가 키를 요구하므로 어느 쪽에든 필요 |
-| `ANALYZE_TIMEOUT_MS` | `900000` | 분석 시간 제한(15 분 — 로컬 27B 추론 등 느린 모델 감안) |
+| `ANALYZE_TIMEOUT_MS` | `900000` | 분석 시간 제한(15 분) |
 | `ANALYZE_MAX_ATTEMPTS` | `2` | 분석 실패 시 총 시도 횟수 |
-| `OCR_MODEL` | `PaddleOCR-VL-1.6-mlx` | oMLX OpenAI 호환 `chat/completions`로 직접 호출할 OCR 모델. 주소·API 키는 `providers.json`의 `omlx` 설정을 함께 쓴다 |
+| `OCR_MODEL` | `glm-4.6v` | z.ai OpenAI 호환 `chat/completions`로 직접 호출할 OCR(비전) 모델. 주소·API 키는 `providers.json`의 `zai` 설정을 함께 쓴다 |
 | `OCR_TIMEOUT_MS` | `120000` | OCR 시간 제한 |
 | `USER_DIR`, `PROMPTS_DIR`, `CONFIG_DIR` | `./user`, `./user/prompts`, `./user/config` | 위치 변경 |
 | `PASSWORD` | (없음) | 내부망 밖에서 들어올 때 쓰는 비밀번호. **없으면 밖에서는 아무도 못 들어온다** |

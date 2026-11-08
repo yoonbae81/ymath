@@ -90,8 +90,8 @@ describe('buildPrompt', () => {
 		expect(p).toContain('$x^2$');
 	});
 
-	it('Qwen에는 첨부 이미지 안내만 제공한다', () => {
-  const p = buildPrompt({ ...base, patterns: [], ocrText:'x', provider:'omlx' });
+	it('GLM에는 첨부 이미지 안내만 제공한다', () => {
+  const p = buildPrompt({ ...base, patterns: [], ocrText:'x', provider:'glm' });
   expect(p).toContain('첨부된 이미지'); expect(p).not.toContain('/x/image.jpg'); expect(p).not.toContain('view_file');
  });
 
@@ -116,7 +116,7 @@ describe('buildPrompt', () => {
 				created_at: '2026-10-05T01:00:00.000Z',
 				analyzed_at: '2026-10-05T00:00:00.000Z',
 				prompt_version: 'abc12345',
-				provider: 'omlx',
+				provider: 'glm',
 				model: 'model'
 			}
 		});
@@ -142,7 +142,7 @@ describe('buildPrompt', () => {
 				created_at: '2026-10-05T01:00:00.000Z',
 				analyzed_at: '2026-10-05T00:00:00.000Z',
 				prompt_version: 'abc12345',
-				provider: 'omlx',
+				provider: 'glm',
 				model: 'model'
 			}
 		});

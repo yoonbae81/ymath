@@ -52,7 +52,7 @@ it('real preparation writes the App-valid manifest and image to S3',async()=>{
 it('real callback commit preserves generation fences and is replay-safe after a lost response',async()=>{
   const f=fixture(); const claim=await (await f.call('claim')).json() as {job:{generation:number;lease_token:string}};
   const resultKey=`items/${entityId}/baton-result-${jobId}-1.json`;
-  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'omlx',model:'fixture-model'}}));
+  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'glm',model:'fixture-model'}}));
   storage.set(resultKey,bytes);
   const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
   const completion={...claim.job,result_key:resultKey,content_hash:hash,size_bytes:bytes.length,model:'fixture-model',prompt_version:'abcd1234',analyzed_at:'2026-10-20T00:00:00.000Z'};
@@ -67,7 +67,7 @@ it('real callback commit preserves generation fences and is replay-safe after a 
 it('commit batch response loss still leaves an authoritative replay receipt',async()=>{
   const f=fixture(); const claim=await (await f.call('claim')).json() as {job:{generation:number;lease_token:string}};
   const result_key=`items/${entityId}/baton-result-${jobId}-1.json`;
-  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'omlx',model:'fixture-model'}}));
+  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'glm',model:'fixture-model'}}));
   storage.set(result_key,bytes);
   const content_hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
   const completion={...claim.job,result_key,content_hash,size_bytes:bytes.length,model:'fixture-model',prompt_version:'abcd1234',analyzed_at:'2026-10-20T00:00:00.000Z'};
@@ -100,7 +100,7 @@ it('real Connect SDK drives real Worker callbacks through validated S3 preparati
     expect(storage.has(request.request_key)).toBe(true);
     expect(storage.has(request.image_key)).toBe(true);
     const result_key=`items/${entityId}/baton-result-${jobId}-1.json`;
-    const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'omlx',model:'fixture-model'}}));
+    const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'glm',model:'fixture-model'}}));
     storage.set(result_key,bytes);
     const content_hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
     return {status:'completed' as const,result_key,content_hash,size_bytes:bytes.length,model:'fixture-model',prompt_version:'abcd1234',analyzed_at:'2026-10-20T00:00:00.000Z'};
@@ -115,7 +115,7 @@ it('commit keeps a pre-bound receipt when the DB fails after the done commit, an
   const f=fixture();
   const claim=await (await f.call('claim')).json() as {job:{generation:number;lease_token:string}};
   const resultKey=`items/${entityId}/baton-result-${jobId}-1.json`;
-  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'omlx',model:'fixture-model'}}));
+  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'glm',model:'fixture-model'}}));
   storage.set(resultKey,bytes);
   const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
   const completion={...claim.job,result_key:resultKey,content_hash:hash,size_bytes:bytes.length,model:'fixture-model',prompt_version:'abcd1234',analyzed_at:'2026-10-20T00:00:00.000Z'};
@@ -152,7 +152,7 @@ it('done-commit replay rejects a different lease token or completion fingerprint
   const f=fixture();
   const claim=await (await f.call('claim')).json() as {job:{generation:number;lease_token:string}};
   const resultKey=`items/${entityId}/baton-result-${jobId}-1.json`;
-  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'omlx',model:'fixture-model'}}));
+  const bytes=new TextEncoder().encode(JSON.stringify({contract_version:1,status:'completed',analysis:validAnalysis(),meta:{provider:'glm',model:'fixture-model'}}));
   storage.set(resultKey,bytes);
   const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
   const completion={...claim.job,result_key:resultKey,content_hash:hash,size_bytes:bytes.length,model:'fixture-model',prompt_version:'abcd1234',analyzed_at:'2026-10-20T00:00:00.000Z'};

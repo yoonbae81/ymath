@@ -103,7 +103,7 @@ export async function finalizeBatonResult(
 	const course = ctx.taxonomy.unitByName.get(out.classification.unit_major)?.course;
 	if (course) out.classification.course = course;
 	const meta = {
-		provider: stored.meta.provider ?? 'omlx',
+		provider: stored.meta.provider ?? 'glm',
 		model: completion.model || stored.meta.model || '',
 		prompt_version: completion.prompt_version,
 		analyzed_at: completion.analyzed_at

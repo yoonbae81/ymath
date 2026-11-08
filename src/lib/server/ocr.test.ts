@@ -11,23 +11,23 @@ beforeEach(() => {
 	writeFileSync(join(work, 'image.jpg'), 'img');
 	writeFileSync(
 		join(work, 'providers.json'),
-		JSON.stringify({ providers: { omlx: { baseUrl: 'https://omlx.test/v1', apiKey: 'test-key' } } })
+		JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4', apiKey: 'test-key' } } })
 	);
 	process.env.CONFIG_DIR = work;
-	delete process.env.OMLX_BASE_URL;
-	delete process.env.OMLX_API_KEY;
+	delete process.env.ZAI_BASE_URL;
+	delete process.env.ZAI_API_KEY;
 });
 
 afterEach(() => {
 	vi.restoreAllMocks();
 	delete process.env.CONFIG_DIR;
 	delete process.env.OCR_MODEL;
-	delete process.env.OMLX_BASE_URL;
-	delete process.env.OMLX_API_KEY;
+	delete process.env.ZAI_BASE_URL;
+	delete process.env.ZAI_API_KEY;
 	rmSync(work, { recursive: true, force: true });
 });
 
-describe('runOcr (oMLX chat/completions)', () => {
+describe('runOcr (z.ai chat/completions, glm-4.6v)', () => {
 	it('image.jpg 를 data URL 로 보내고 LOC 토큰을 치운 markdown 을 돌려준다', async () => {
 		let url = '';
 		let headers: Record<string, string> = {};
@@ -49,9 +49,9 @@ describe('runOcr (oMLX chat/completions)', () => {
 		);
 		const md = await runOcr(work);
 		expect(md).toBe('0051 심\n두 이차방정식');
-		expect(url).toBe('https://omlx.test/v1/chat/completions');
+		expect(url).toBe('https://zai.test/api/coding/paas/v4/chat/completions');
 		expect(headers).toMatchObject({ Authorization: 'Bearer test-key', 'Content-Type': 'application/json' });
-		expect(body.model).toBe('PaddleOCR-VL-1.6-mlx');
+		expect(body.model).toBe('glm-4.6v');
 		expect(body.messages).toHaveLength(2);
 		expect(body.messages[0]).toMatchObject({ role: 'system' });
 		expect(body.messages[0].content).toContain('Markdown');
@@ -77,9 +77,9 @@ describe('runOcr (oMLX chat/completions)', () => {
 		expect(model).toBe('paddle-override');
 	});
 
-	it('OCR 주소와 키는 OMLX 환경변수 대신 providers.json 만 쓴다', async () => {
-		process.env.OMLX_BASE_URL = 'https://wrong-env.test/v1';
-		process.env.OMLX_API_KEY = 'wrong-env-key';
+	it('OCR 주소와 키는 ZAI 환경변수 대신 providers.json 만 쓴다', async () => {
+		process.env.ZAI_BASE_URL = 'https://wrong-env.test/v1';
+		process.env.ZAI_API_KEY = 'wrong-env-key';
 		let url = '';
 		let authorization = '';
 		vi.stubGlobal(
@@ -91,7 +91,7 @@ describe('runOcr (oMLX chat/completions)', () => {
 			})
 		);
 		await runOcr(work);
-		expect(url).toBe('https://omlx.test/v1/chat/completions');
+		expect(url).toBe('https://zai.test/api/coding/paas/v4/chat/completions');
 		expect(authorization).toBe('Bearer test-key');
 	});
 
@@ -115,17 +115,17 @@ describe('runOcr (oMLX chat/completions)', () => {
 
 	it('연결 실패·시간 초과를 구분해 알린다', async () => {
 		vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('fetch failed'))));
-		await expect(runOcr(work)).rejects.toThrow(/OCR 서버\(https:\/\/omlx\.test\/v1\)에 연결할 수 없음/);
+		await expect(runOcr(work)).rejects.toThrow(/OCR 서버\(https:\/\/zai\.test\/api\/coding\/paas\/v4\)에 연결할 수 없음/);
 		const abort = Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
 		vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(abort)));
 		await expect(runOcr(work)).rejects.toThrow(/OCR 시간 초과/);
 	});
 
-	it('providers.json 의 omlx 주소나 키가 없으면 호출 전에 실패한다', async () => {
-		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { omlx: { baseUrl: 'https://omlx.test/v1' } } }));
+	it('providers.json 의 zai 주소나 키가 없으면 호출 전에 실패한다', async () => {
+		writeFileSync(join(work, 'providers.json'), JSON.stringify({ providers: { zai: { baseUrl: 'https://zai.test/api/coding/paas/v4' } } }));
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
-		await expect(runOcr(work)).rejects.toThrow(/providers\.json.*omlx baseUrl·apiKey/);
+		await expect(runOcr(work)).rejects.toThrow(/providers\.json.*zai baseUrl·apiKey/);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });
