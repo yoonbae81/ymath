@@ -13,7 +13,7 @@ export interface PromptInput {
 	ocrText: string;
 	feedback?: Feedback;
 	hint?: string;
-	/** Qwen은 메시지에 첨부된 이미지를 읽는다 */
+	/** GLM 비전 모델은 메시지에 첨부된 이미지를 읽는다 */
 	provider?: Provider;
 }
 

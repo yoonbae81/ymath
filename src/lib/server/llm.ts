@@ -22,7 +22,7 @@ export interface StructuredCall {
 	schema: object;
 	/** 작업 디렉터리(임시 파일도 여기에 만들고 지운다) */
 	dir: string;
-	/** 분석할 사진. Qwen에 base64 data URL로 첨부한다 */
+	/** 분석할 사진. GLM에 base64 data URL 로 첨부한다 */
 	imagePath: string;
 }
 
@@ -33,13 +33,13 @@ export interface LlmOutput {
 
 const missingKeyError = (provider: string, how: string) => new Error(`${provider} API 키가 설정되지 않았습니다. ${how}`);
 
-/** image.jpg 를 base64 data URL 로 첨부한 멀티모달 user 메시지(Qwen) */
+/** image.jpg 를 base64 data URL 로 첨부한 멀티모달 user 메시지(GLM) */
 const imageUserMessage = (imagePath: string, prompt: string): { role: 'user'; content: ChatContentPart[] } =>
 	base64ImageUserMessage(readFileSync(imagePath).toString('base64'), prompt);
 
 /**
  * OpenAI 호환 chat/completions 한 번 호출하고 응답 본문을 반환한다.
- * 집 내부망 oMLX에서 한 곳에서 429·할당량·빈 응답을 처리한다.
+ * z.ai에서 한 곳에서 429·할당량·빈 응답을 처리한다.
  */
 async function chatCompletion(o: {
 	label: string;
@@ -111,56 +111,59 @@ async function chatCompletion(o: {
 	}
 }
 
-async function structuredWithOmlx(c: StructuredCall): Promise<LlmOutput> {
+/**
+ * 모델별 z.ai 요청 옵션. GLM-5.3-Flash·GLM-5V 계열은 추론을 강제해서 thinking 을 끌 수 없으므로
+ * 텍스트 전용 모델(glm-5.3)일 때만 thinking 을 끈다. 추론 토큰이 응답 JSON 과 함께 max_tokens 를
+ * 소비하므로 넉넉하게 둔다(예전 z.ai 경로의 실측 규약).
+ */
+const zaiExtraBody = (model: string): Record<string, unknown> => ({
+	max_tokens: 16384,
+	...(/flash|5v/.test(model) ? {} : { thinking: { type: 'disabled' as const } })
+});
+
+async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	const s = settings();
-	if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
-	if (!s.omlxBaseUrl)
-		throw new Error('user/config/providers.json 의 omlx 에 baseUrl 을 채우세요 — 모델은 미지정 시 oMLX alias "default" 를 쓴다');
-	const { omlxBaseUrl, omlxApiKey, omlxModel } = s;
+	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우세요');
+	if (!s.zaiBaseUrl)
+		throw new Error('user/config/providers.json 의 zai 에 baseUrl 을 채우세요 — z.ai 코딩 엔드포인트(https://api.z.ai/api/coding/paas/v4)를 쓴다');
+	const { zaiBaseUrl, zaiApiKey, zaiModel } = s;
 	const content = await chatCompletion({
-		label: 'oMLX',
-		baseUrl: omlxBaseUrl,
-		apiKey: omlxApiKey,
-		model: omlxModel,
+		label: 'z.ai',
+		baseUrl: zaiBaseUrl,
+		apiKey: zaiApiKey,
+		model: zaiModel,
 		messages: [{ role: 'system', content: MATH_COACH_SYSTEM }, imageUserMessage(c.imagePath, promptWithSchema(c.prompt, c.schema))],
 		jsonMode: true,
-		// Qwen 계열은 thinking 을 본문에 섞어 내보내므로 출력 예산을 넉넉히 둔다
-		extraBody: {
-			max_tokens: 16384,
-			// 서버 측 스키마 강제(oMLX가 json_schema response_format 지원). 프롬프트 스키마는 보조 수단.
-			response_format: { type: 'json_schema', json_schema: { name: 'analysis', strict: true, schema: c.schema } }
-		},
+		extraBody: zaiExtraBody(zaiModel),
 		timeoutMs: s.analyzeTimeoutMs
 	});
-	return { output: parseJsonBody('oMLX', content), model: omlxModel };
+	return { output: parseJsonBody('zai', content), model: zaiModel };
 }
 
 /** 지정한 LLM 으로 사진을 분석해 구조화된 결과를 받는다. */
 export function runStructured(provider: Provider, call: StructuredCall): Promise<LlmOutput> {
-	if (provider === 'omlx') return structuredWithOmlx(call);
+	if (provider === 'glm') return structuredWithZai(call);
 	// 옛 기록의 requested_provider 같은 값이 타입 검사를 우회해 올 수 있다
 	return Promise.reject(new Error(`사용할 수 없는 LLM 입니다: ${provider}`));
 }
 
 /** 텍스트만 주고받는 호출(사진·스키마 없음). 보고서 작성처럼 프롬프트 → 본문만 필요한 곳에서 쓴다. */
 export async function runText(provider: Provider, prompt: string): Promise<{ text: string; model: string }> {
-	if (provider !== 'omlx') throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
+	if (provider !== 'glm') throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
 	const s = settings();
-	if (provider === 'omlx') {
-		if (!s.omlxApiKey) throw missingKeyError('oMLX', 'user/config/providers.json 의 omlx apiKey 를 채우세요');
-		if (!s.omlxBaseUrl || !s.omlxModel)
-			throw new Error('user/config/providers.json 의 omlx 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
-		const { omlxBaseUrl, omlxApiKey, omlxModel } = s;
-		const text = await chatCompletion({
-			label: 'oMLX',
-			baseUrl: omlxBaseUrl,
-			apiKey: omlxApiKey,
-			model: omlxModel,
-			messages: [{ role: 'user', content: prompt }],
-			jsonMode: false,
-			timeoutMs: s.analyzeTimeoutMs
-		});
-		return { text: text.trim(), model: omlxModel };
-	}
-	throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
+	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우세요');
+	if (!s.zaiBaseUrl || !s.zaiModel)
+		throw new Error('user/config/providers.json 의 zai 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
+	const { zaiBaseUrl, zaiApiKey, zaiModel } = s;
+	const text = await chatCompletion({
+		label: 'z.ai',
+		baseUrl: zaiBaseUrl,
+		apiKey: zaiApiKey,
+		model: zaiModel,
+		messages: [{ role: 'user', content: prompt }],
+		jsonMode: false,
+		extraBody: zaiExtraBody(zaiModel),
+		timeoutMs: s.analyzeTimeoutMs
+	});
+	return { text: text.trim(), model: zaiModel };
 }

@@ -222,7 +222,7 @@ export class ReportQueue {
 			const promptVersion = createHash('sha1').update(guideline).digest('hex').slice(0, 8);
 
 			let markdown: string;
-			let usedModel = settings().omlxModel ?? '';
+			let usedModel = settings().zaiModel ?? '';
 			if (this.runner) {
 				markdown = await this.runner(prompt);
 			} else {

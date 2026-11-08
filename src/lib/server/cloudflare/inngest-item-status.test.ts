@@ -49,7 +49,7 @@ function fixture(ocrText?: string) {
 		async get(key: string) { return objects.get(key) ?? null; },
 		async put(key: string, bytes: Uint8Array, type?: string) { objects.set(key, bytes); },
 		async delete(key: string) { objects.delete(key); }
-	}, INNGEST_EVENT_KEY: 'local-event', INNGEST_SIGNING_KEY: 'local-signing', OMLX_API_KEY: 'local-test', OMLX_BASE_URL: 'https://example.test/v1', OMLX_MODEL: 'local-test' } as unknown as CloudflareEnv;
+	}, INNGEST_EVENT_KEY: 'local-event', INNGEST_SIGNING_KEY: 'local-signing', ZAI_API_KEY: 'local-test', ZAI_BASE_URL: 'https://example.test/v1' } as unknown as CloudflareEnv;
 	const handler = createItemAnalysisHandler(env, {
 		guidelineRaw: '# 테스트',
 		curriculumRaw: readFileSync(new URL('../../../../user/prompts/curriculum.md', import.meta.url), 'utf8'),

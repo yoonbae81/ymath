@@ -48,12 +48,12 @@ export function promptVersion(guideline: string, curriculum: string): string {
 }
 
 /**
- * 과거 requested_provider를 변경하지 않고 실행할 때만 Qwen으로 고정한다.
+ * 과거 requested_provider를 변경하지 않고 실행할 때만 GLM으로 고정한다.
  */
 export const providerFor = (record: ItemRecord): Provider =>
-	'omlx';
+	'glm';
 
-/** 실제 분석기: Qwen(oMLX)을 호출해 구조화된 결과를 받는다 */
+/** 실제 분석기: GLM(z.ai)을 호출해 구조화된 결과를 받는다 */
 export const analyzeItem: Analyzer = async ({ record, dir, ocrText, feedback, hint, knownPatterns }) => {
 	const provider = providerFor(record);
 	const guideline = renderPrompt(readFileSync(join(promptsDir(), 'analyze.md'), 'utf8'));

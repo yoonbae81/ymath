@@ -15,7 +15,7 @@ export const GET: RequestHandler = async ({ platform }) => {
 export const POST: RequestHandler = async ({ request, url, getClientAddress, platform }) => {
 	requireAjax(request);
 	const provider = url.searchParams.get('provider');
-	if (provider !== null && provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
+	if (provider !== null && provider !== 'glm') error(400, 'GLM(glm)만 사용할 수 있습니다');
 	// OWASP ASVS V2.4.1: 상태 변경 API 속도 제한(IP 당)
 	requireMutationRate(getClientAddress, request);
 	let body: Record<string, unknown>;
@@ -29,7 +29,7 @@ export const POST: RequestHandler = async ({ request, url, getClientAddress, pla
 		error(400, '잘못된 JSON 본문입니다');
 	}
 
-	if (body.provider !== undefined && body.provider !== 'omlx') error(400, 'Qwen(omlx)만 사용할 수 있습니다');
+	if (body.provider !== undefined && body.provider !== 'glm') error(400, 'GLM(glm)만 사용할 수 있습니다');
 	const rawTopic = typeof body.topic === 'string' ? body.topic.trim() : '';
 	if (!rawTopic) {
 		error(400, '보고서를 작성할 영역을 지정해 주세요');

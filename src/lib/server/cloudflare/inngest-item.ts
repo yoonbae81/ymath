@@ -13,7 +13,7 @@ import { runBatonAnalysis } from './baton-analysis';
 import type { BatonTriggerPublisher } from './baton-analysis';
 
 export { cloudItemBackend };
-export const DEFAULT_OCR_MODEL = 'PaddleOCR-VL-1.6-mlx';
+export const DEFAULT_OCR_MODEL = 'glm-4.6v';
 export const ITEM_EVENT_NAME = 'ymath/item.requested';
 export const BATON_COMPLETION_EVENT = 'ymath/item.baton.completed';
 export const ITEM_FUNCTION_ID = 'item-analysis';

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-	DEFAULT_OLMX_MODEL,
+	DEFAULT_GLM_MODEL,
 	gradeRank,
 	loadWorkbooks,
 	readLlmProviders,
@@ -132,34 +132,46 @@ describe('user/config/providers.json (LLM 설정)', () => {
 
 	it('파일이 없으면 빈 providers 이고 키도 비어 있다', () => {
 		expect(readLlmProviders()).toEqual({});
-		expect(settings().omlxApiKey).toBeUndefined();
+		expect(settings().zaiApiKey).toBeUndefined();
 	});
 
-	it('provider별 apiKey·baseUrl·모델을 읽는다', () => {
+	it('zai 항목의 apiKey·baseUrl·모델을 읽는다', () => {
 		write({
 			providers: {
-				omlx: { baseUrl: 'http://x:9000/v1', apiKey: 'k1', models: [{ id: 'm1', name: 'M1' }] }
+				omlx: { baseUrl: 'http://legacy.test/v1', apiKey: 'legacy-key' },
+				zai: { baseUrl: 'https://api.z.ai/api/coding/paas/v4', apiKey: 'k1', models: [{ id: 'glm-5.3-flash', name: 'GLM 5.3 Flash' }] }
 			}
 		});
 		const s = settings();
-		expect(s.omlxApiKey).toBe('k1');
-		expect(s.omlxBaseUrl).toBe('http://x:9000/v1');
-		expect(s.omlxModel).toBe('m1');
+		expect(s.zaiApiKey).toBe('k1');
+		expect(s.zaiBaseUrl).toBe('https://api.z.ai/api/coding/paas/v4');
+		expect(s.zaiModel).toBe('glm-5.3-flash');
+		// 실행 provider 는 GLM 하나로 고정이다
+		expect(s.provider).toBe('glm');
+		// 레거시 omlx 항목은 읽지 않는다
+		expect(s).not.toHaveProperty('omlxApiKey');
 	});
 
-	it('omlx 모델 미지정 시 oMLX alias default 로 폴백한다', () => {
-		write({ providers: { omlx: { baseUrl: 'http://x:9000/v1', apiKey: 'k1' } } });
-		expect(settings().omlxModel).toBe('default');
-		expect(DEFAULT_OLMX_MODEL).toBe('default');
+	it('zai 모델 미지정 시 기본 모델 glm-5.3-flash 로 폴백한다', () => {
+		write({ providers: { zai: { baseUrl: 'https://api.z.ai/api/coding/paas/v4', apiKey: 'k1' } } });
+		expect(settings().zaiModel).toBe('glm-5.3-flash');
+		expect(DEFAULT_GLM_MODEL).toBe('glm-5.3-flash');
 	});
 
-	it('레거시 provider 설정과 환경변수를 무시한다', () => {
-  write({ providers: { zai: { apiKey: 'fixture', models: [{id:'glm'}] } } });
-  process.env.ZAI_API_KEY = 'env-fixture';
-  expect(readLlmProviders()).toEqual({});
-  expect(settings()).not.toHaveProperty('zaiApiKey');
-  expect(settings().provider).toBe('omlx');
- });
+	it('OCR 기본 모델은 GLM 비전 모델이다', () => {
+		write({ providers: { zai: { baseUrl: 'https://api.z.ai/api/coding/paas/v4', apiKey: 'k1' } } });
+		expect(settings().ocrModel).toBe('glm-4.6v');
+		process.env.OCR_MODEL = 'override-model';
+		expect(settings().ocrModel).toBe('override-model');
+	});
+
+	it('레거시 provider 전용 설정과 환경변수를 무시한다', () => {
+		write({ providers: { omlx: { baseUrl: 'http://x:9000/v1', apiKey: 'k-omlx' } } });
+		process.env.ZAI_API_KEY = 'env-fixture';
+		expect(readLlmProviders()).toEqual({});
+		expect(settings().zaiApiKey).toBeUndefined();
+		expect(settings().provider).toBe('glm');
+	});
 
 	it('JSON이 깨지면 명확한 오류를 낸다', () => {
 		writeFileSync(join(dir, 'providers.json'), '{ 깨진 JSON');

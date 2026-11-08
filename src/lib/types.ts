@@ -1,13 +1,19 @@
-/** 분석에 쓸 수 있는 LLM */
-export const PROVIDERS = ['omlx', 'glm', 'agy'] as const;
+/** 분석에 쓸 수 있는 LLM — GLM(z.ai) 하나다. */
+export const PROVIDERS = ['glm'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { omlx: 'Qwen', glm: 'GLM', agy: 'Gemini' };
+export const PROVIDER_LABEL: Record<Provider, string> = { glm: 'GLM' };
 
 /** 분석 UI 에서 재분석 버튼 옆에 보여주는 프로바이더 옵션 (catalog 의 providers 키와 동기화) */
 export const AVAILABLE_PROVIDERS: readonly { id: Provider; label: string }[] = PROVIDERS.map((id) => ({ id, label: PROVIDER_LABEL[id] }));
 
 /** 삭제된 LLM. 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
-const LEGACY_PROVIDER_LABEL: Record<string, string> = { claude: 'Claude', zai: 'GLM 5.3 (Z.AI)', codex: 'Codex', agy: 'Agy (Gemini)' };
+const LEGACY_PROVIDER_LABEL: Record<string, string> = {
+	claude: 'Claude',
+	zai: 'GLM 5.3 (Z.AI)',
+	codex: 'Codex',
+	agy: 'Agy (Gemini)',
+	omlx: 'Qwen (oMLX)'
+};
 
 /** 기록에 남은 provider 값을 화면 표시용 라벨로. 목록에서 빠진 옛 값도 깨지지 않게 그 값 자체로 보여 준다 */
 export const providerLabel = (provider: string | null | undefined): string =>
@@ -119,7 +125,7 @@ export interface ItemRecord {
 	image: string;
 	flags: RecordFlags;
 	analysis: Analysis | null;
-	/** 과거 재분석 요청 provider도 읽기 위해 문자열로 보존. 새 실행은 Qwen만 사용 */
+	/** 과거 재분석 요청 provider도 읽기 위해 문자열로 보존. 새 실행은 GLM만 사용 */
 	requested_provider?: string;
 	meta: { provider?: string; model: string; prompt_version: string; analyzed_at: string } | null;
 	/** 분석 결과에 대한 학생 반응. 재분석해도 지우지 않고, 같은 분석에 다시 답하면 덮어쓴다 */

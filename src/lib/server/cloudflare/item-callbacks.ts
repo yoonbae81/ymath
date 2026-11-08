@@ -35,7 +35,7 @@ export type ItemCallbackAction = (typeof ITEM_CALLBACK_ACTIONS)[number];
 const JOB_ID = /^[0-9a-fA-F-]{36}$/;
 const ENTITY_ID = /^[0-9]{8}-[0-9]{6}-[a-z0-9]{4}$/;
 const OBJECT_KEY = /^items\/[!-~]+$/;
-const DEFAULT_OCR_MODEL = 'PaddleOCR-VL-1.6-mlx';
+const DEFAULT_OCR_MODEL = 'glm-4.6v';
 /** RATE_LIMITED bounded sleep 후의 lease 연장 상한(초). 숨은 무한 대기 금지. */
 export const ITEM_RENEW_MAX_SECONDS = 3600;
 
@@ -92,10 +92,10 @@ export async function renewItemLease(db: D1DatabaseLike, fenced: LeaseFence, sec
 }
 
 async function runDirectOcr(env: CloudflareEnv, imageKey: string): Promise<string> {
-	const base = env.OMLX_BASE_URL?.trim().replace(/\/+$/, '');
-	const key = env.OMLX_API_KEY?.trim();
+	const base = env.ZAI_BASE_URL?.trim().replace(/\/+$/, '');
+	const key = env.ZAI_API_KEY?.trim();
 	const model = env.OCR_MODEL?.trim() || DEFAULT_OCR_MODEL;
-	if (!base || !key) throw new Error('OCR_OMLX_NOT_CONFIGURED');
+	if (!base || !key) throw new Error('OCR_NOT_CONFIGURED');
 	const jpeg = await readObjectBytes(env, imageKey);
 	const response = await fetch(`${base}/chat/completions`, {
 		method: 'POST',

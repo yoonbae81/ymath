@@ -7,10 +7,13 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { PROVIDERS, PROVIDER_LABEL, type Provider } from '$lib/types';
+import { PROVIDERS, PROVIDER_LABEL, providerLabel, type Provider } from '$lib/types';
 
-it('labels the registered agy provider as Gemini without a model version', () => {
-  expect(PROVIDER_LABEL.agy).toBe('Gemini');
+it('labels GLM as the only registered provider', () => {
+  expect(PROVIDER_LABEL).toEqual({ glm: 'GLM' });
+  // 삭제된 provider 는 레거시 라벨로 계속 읽힌다
+  expect(providerLabel('omlx')).toBe('Qwen (oMLX)');
+  expect(providerLabel('agy')).toBe('Agy (Gemini)');
 });
 
 /* --------------------------------------------------------------------------- */
@@ -22,11 +25,11 @@ import { batonCatalog, batonProfileForProvider, assertBatonProviderSelectable, b
 const SOURCE_PATH = '/Users/y/Github/baton/config/ymath.cloud.json';
 
 describe('catalog sync & shape', () => {
-  it('checked-in catalog copy matches the baton repo source of truth (providers+profiles)', () => {
+  it('checked-in catalog copy matches the baton repo source of truth (providers+profiles)', (ctx) => {
     let source: string | undefined;
     try { source = readFileSync(SOURCE_PATH, 'utf8'); }
-    catch { /* baton repo not present — skip test */ }
-    expect(source).toBeDefined();
+    catch { /* baton repo not present — 동기성 검증 불가, 이 테스트만 건너뛴다 */ }
+    if (!source) ctx.skip();
     const parsed = JSON.parse(source!);
     expect(batonCatalog.providers).toEqual(parsed.providers);
     expect(batonCatalog.profiles).toEqual(parsed.profiles);
@@ -36,20 +39,18 @@ describe('catalog sync & shape', () => {
     expect([...PROVIDERS]).toEqual(Object.keys(batonCatalog.providers));
   });
 
-  it('PROVIDERS contains exactly omlx and glm', () => {
-    expect(PROVIDERS).toContain('omlx');
-    expect(PROVIDERS).toContain('glm');
-    expect(PROVIDERS).not.toContain('qwen');
-    expect(PROVIDERS.length).toBe(3);
+  it('PROVIDERS contains exactly glm', () => {
+    expect(PROVIDERS).toEqual(['glm']);
+    expect(PROVIDERS).not.toContain('omlx');
+    expect(PROVIDERS).not.toContain('agy');
   });
 
-  it('batonDefaultProvider is omlx', () => {
-    expect(batonDefaultProvider).toBe('omlx');
+  it('batonDefaultProvider is glm', () => {
+    expect(batonDefaultProvider).toBe('glm');
   });
 
   it('maps each catalog provider to its Runner profile and rejects unknown ids', () => {
-    expect(batonProfileForProvider('omlx')).toBe('analysis');
-    expect(batonProfileForProvider('glm')).toBe('analysis-glm');
+    expect(batonProfileForProvider('glm')).toBe('analysis');
     for (const id of Object.keys(batonCatalog.providers)) {
       expect(batonProfileForProvider(id)).toBeTruthy();
     }
@@ -65,8 +66,8 @@ describe('catalog sync & shape', () => {
   });
 
   it('assertBatonProviderSelectable passes for catalog providers', () => {
-    expect(() => assertBatonProviderSelectable('omlx')).not.toThrow();
     expect(() => assertBatonProviderSelectable('glm')).not.toThrow();
+    expect(() => assertBatonProviderSelectable('omlx')).toThrow(/카탈로그/);
   });
 });
 
@@ -89,8 +90,12 @@ function baseRequest(): BatonExecuteRequest {
 
 describe('BatonExecuteRequest profile_id wire contract', () => {
   it('accepts valid profile_id', () => {
-    expect(() => validateBatonRequest({ ...baseRequest(), profile_id: 'analysis-glm' })).not.toThrow();
     expect(() => validateBatonRequest({ ...baseRequest(), profile_id: 'analysis' })).not.toThrow();
+  });
+
+  it.each(['analysis-glm', 'analysis-agy'])('rejects profile_id removed from the GLM-only catalog: %s', (pid) => {
+    // profile_id 는 자유 문자열이라 와이어는 허용하지만, 카탈로그 선택 단계에서 fail-closed 다
+    expect(batonProfileForProvider(pid)).toBeNull();
   });
 
   it.each([

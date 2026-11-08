@@ -11,10 +11,10 @@ export const load: PageServerLoad = async ({ depends, platform }) => {
 		let taxonomy: { topics?: string[]; concepts?: Record<string, string> } = {};
 		try { taxonomy = JSON.parse(platform.env.TAXONOMY_JSON ?? '{}'); } catch { /* use stored topic fallback */ }
 		const topics = taxonomy.topics ?? [...new Set(items.map((i) => i.analysis?.classification.topic).filter((x): x is string => !!x))];
-		const defaultProvider: Provider = 'omlx';
+		const defaultProvider: Provider = 'glm';
 		return { items, topics, concepts: taxonomy.concepts ?? {}, taxonomyError: null, workbooks: workbooksFromEnv(platform.env.WORKBOOKS_JSON), defaultProvider };
 	}
-	if (!NODE_RUNTIME) return { items, topics: [], concepts: {}, taxonomyError: '데이터베이스에 연결할 수 없습니다', workbooks: [], defaultProvider: 'omlx' as Provider };
+	if (!NODE_RUNTIME) return { items, topics: [], concepts: {}, taxonomyError: '데이터베이스에 연결할 수 없습니다', workbooks: [], defaultProvider: 'glm' as Provider };
 	const config = await import('$lib/server/config');
 	const { loadTaxonomy } = await import('$lib/server/taxonomy');
 

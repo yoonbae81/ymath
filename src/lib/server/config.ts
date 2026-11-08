@@ -11,7 +11,7 @@ export const dataDir = () => resolve(process.env.DATA_DIR ?? join(userDir(), 'da
 export const promptsDir = () => resolve(process.env.PROMPTS_DIR ?? join(userDir(), 'prompts'));
 export const configDir = () => resolve(process.env.CONFIG_DIR ?? join(userDir(), 'config'));
 
-/** user/config/providers.json의 omlx 항목만 읽는다. 레거시 설정과 환경변수는 지원하지 않는다. */
+/** user/config/providers.json의 zai(GLM) 항목만 읽는다. 레거시 설정과 환경변수는 지원하지 않는다. */
 export interface LlmProviderConfig {
 	baseUrl?: string;
 	apiKey?: string;
@@ -20,14 +20,20 @@ export interface LlmProviderConfig {
 
 const providersFile = () => join(configDir(), 'providers.json');
 
-/** oMLX 모델 alias. 실제 모델은 oMLX 대시보드에서 alias 와 매핑하므로 저장소는 모델명을 모른 채 'default' 로 호출한다 */
-export const DEFAULT_OLMX_MODEL = 'default';
+/**
+ * z.ai(OpenAI 호환) GLM 실행 기본 모델. 사진을 base64 data URL 로 첨부하므로
+ * 이미지 입력이 되는 모델이어야 한다(glm-5.3 텍스트 전용은 사진 블록을 400 으로 거부 — 실호 확인).
+ * 실측 검증: 코딩 엔드포인트에서 glm-5.3-flash 텍스트·json_object·json_schema(strict) OK, glm-4.6v 이미지 data URL OK.
+ */
+export const DEFAULT_GLM_MODEL = 'glm-5.3-flash';
+/** OCR 기본 모델. 이미지 data URL 입력이 되는 GLM 비전 모델(PaddleOCR-VL 전처리를 대체한다). */
+export const DEFAULT_OCR_MODEL = 'glm-4.6v';
 
 /** 설정 파일의 providers 맵. 파일이 없으면 빈 객체, 있지만 깨졌으면 명확히 실패한다 */
 export function readLlmProviders(): Record<string, LlmProviderConfig> {
 	try {
 		const parsed = JSON.parse(readFileSync(providersFile(), 'utf8')) as { providers?: Record<string, LlmProviderConfig> };
-		return parsed.providers?.omlx ? { omlx: parsed.providers.omlx } : {};
+		return parsed.providers?.zai ? { zai: parsed.providers.zai } : {};
 	} catch (e) {
 		if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') return {};
 		throw new Error(`user/config/providers.json 을 읽을 수 없음: ${e instanceof Error ? e.message : String(e)}`);
@@ -36,18 +42,18 @@ export function readLlmProviders(): Record<string, LlmProviderConfig> {
 
 export const settings = () => {
 	const providers = readLlmProviders();
-	const omlx = providers.omlx;
+	const zai = providers.zai;
 	return {
-		/** 실행 provider는 Qwen(oMLX)으로 고정한다. 옛 환경변수는 무시한다. */
-		provider: 'omlx' as Provider,
-		/** 집 내부망 oMLX 서버(OpenAI 호환, Mac에서 MLX 추론). 주소·키는 user/config/providers.json 의 omlx 만 본다 — 환경변수 우회는 없다 */
-		omlxBaseUrl: omlx?.baseUrl,
-		/** 모델은 oMLX 쪽 alias 로 호출한다. providers.json 에 models[0].id 가 없으면 alias 'default' (oMLX 대시보드에서 실제 모델과 매핑) */
-		omlxModel: omlx?.models?.[0]?.id ?? DEFAULT_OLMX_MODEL,
-		omlxApiKey: omlx?.apiKey,
-	// OCR 주소와 키는 별도 설정을 두지 않고 providers.json 의 omlx 를 함께 쓴다. 모델만 환경변수로 바꿀 수 있다
-	ocrModel: process.env.OCR_MODEL?.trim() || 'PaddleOCR-VL-1.6-mlx',
-	// 15 분. 로컬 27B(oMLX Qwen3.8) 같은 느린 모델은 로드+추론만 수 분이 걸린다
+		/** 실행 provider는 GLM(z.ai)으로 고정한다. 옛 환경변수는 무시한다. */
+		provider: 'glm' as Provider,
+		/** z.ai 코딩 엔드포인트(OpenAI 호환). 주소·키는 user/config/providers.json 의 zai 만 본다 — 환경변수 우회는 없다 */
+		zaiBaseUrl: zai?.baseUrl,
+		zaiApiKey: zai?.apiKey,
+		/** 모델. providers.json 의 zai models[0].id 가 없으면 기본값 glm-5.3-flash */
+		zaiModel: zai?.models?.[0]?.id ?? DEFAULT_GLM_MODEL,
+	// OCR 주소·키는 별도 설정 없이 providers.json 의 zai 를 함께 쓰고, 모델만 환경변수로 바꿀 수 있다
+	ocrModel: process.env.OCR_MODEL?.trim() || DEFAULT_OCR_MODEL,
+	// 15 분. 원격 API 라도 긴 추론(구조화 분석 전체)을 감안해 넉넉히 둔다
 	analyzeTimeoutMs: Number(process.env.ANALYZE_TIMEOUT_MS ?? 15 * 60_000),
 	ocrTimeoutMs: Number(process.env.OCR_TIMEOUT_MS ?? 2 * 60_000),
 		maxAttempts: Number(process.env.ANALYZE_MAX_ATTEMPTS ?? 2),

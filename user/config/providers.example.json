@@ -1,12 +1,12 @@
 {
   "providers": {
-    "omlx": {
-      "baseUrl": "http://localhost:9000/v1",
-      "apiKey": "omlx-xxxxxxxxxxxx",
+    "zai": {
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "apiKey": "zai-xxxxxxxxxxxx",
       "models": [
         {
-          "id": "default",
-          "name": "Default"
+          "id": "glm-5.3-flash",
+          "name": "GLM 5.3 Flash"
         }
       ]
     }

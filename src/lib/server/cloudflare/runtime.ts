@@ -8,7 +8,7 @@ import { requireS3Store, type S3Store } from './s3-store';
 export { markViewed, saveFeedback, setFavorite };
 export { cloudItemBackend, runnerClaimableKind } from './jobs';
 
-export interface CloudflareEnv { DB: D1DatabaseLike & { batch<T = unknown>(statements: D1Statement[]): Promise<T[]> }; S3: S3Store; WORKBOOKS_JSON?: string; TAXONOMY_JSON?: string; RUNNER_TOKEN?: string; TEST_ONLY_FIXTURES?: string; REPORT_BACKEND?: string; REPORT_INNGEST_EXECUTION_ENABLED?: string; ITEM_ANALYSIS_BACKEND?: string; OCR_MODEL?: string; STUDENT_NAME?: string; SYNTHETIC_SUBMIT_ENABLED?: string; INNGEST_EVENT_KEY?: string; INNGEST_SIGNING_KEY?: string; OMLX_API_KEY?: string; OMLX_BASE_URL?: string; OMLX_MODEL?: string; S3_ENDPOINT?: string; S3_BUCKET?: string; S3_REGION?: string; S3_ACCESS_KEY_ID?: string; S3_SECRET_ACCESS_KEY?: string }
+export interface CloudflareEnv { DB: D1DatabaseLike & { batch<T = unknown>(statements: D1Statement[]): Promise<T[]> }; S3: S3Store; WORKBOOKS_JSON?: string; TAXONOMY_JSON?: string; RUNNER_TOKEN?: string; TEST_ONLY_FIXTURES?: string; REPORT_BACKEND?: string; REPORT_INNGEST_EXECUTION_ENABLED?: string; ITEM_ANALYSIS_BACKEND?: string; OCR_MODEL?: string; STUDENT_NAME?: string; SYNTHETIC_SUBMIT_ENABLED?: string; INNGEST_EVENT_KEY?: string; INNGEST_SIGNING_KEY?: string; ZAI_API_KEY?: string; ZAI_BASE_URL?: string; S3_ENDPOINT?: string; S3_BUCKET?: string; S3_REGION?: string; S3_ACCESS_KEY_ID?: string; S3_SECRET_ACCESS_KEY?: string }
 export class CloudStorageError extends Error { constructor(message: string) { super(message); this.name = 'CloudStorageError'; } }
 
 /** S3-only storage: every object path resolves the shared store up front and fails
@@ -131,7 +131,7 @@ export async function claimCloudJob(env: CloudflareEnv, runner: string, now = ne
 	const entity = await env.DB.prepare('SELECT raw_key, image_key, record_json, ocr_key FROM entities WHERE id = ? AND deleted_at IS NULL').bind(job.entity_id).first<{ raw_key: string | null; image_key: string | null; record_json: string; ocr_key: string | null }>();
 	if (!entity || job.kind !== 'item') return { ...job, entity: null };
 	const record = JSON.parse(entity.record_json) as ItemRecord;
-	record.requested_provider = 'omlx';
+	record.requested_provider = 'glm';
 	const feedback = await env.DB.prepare('SELECT payload_json FROM feedback WHERE entity_id = ? ORDER BY updated_at').bind(job.entity_id).all<{ payload_json: string }>();
 	record.feedback = (feedback.results ?? []).map((entry) => JSON.parse(entry.payload_json));
 	const patterns = await env.DB.prepare(`SELECT json_extract(record_json,'$.analysis.error_analysis.error_pattern_id') AS id, COUNT(*) AS count,
@@ -391,7 +391,7 @@ export async function createCloudReport(env: CloudflareEnv, topic: string, perio
 	const id = `${now.getUTCFullYear()}${p(now.getUTCMonth() + 1)}${p(now.getUTCDate())}-${p(now.getUTCHours())}${p(now.getUTCMinutes())}${p(now.getUTCSeconds())}-rep-${crypto.randomUUID().replaceAll('-', '').slice(0, 4)}`;
 	const createdAt = now.toISOString();
 	const report: ReportRecord = { schema_version: 1, id, created_at: createdAt, topic, period, period_label: formatPeriodLabel(period, seoulNow), status: 'queued', error: null, attempts: 0, item_ids: targets.map((record) => record.id), items_fingerprint: fingerprint, summary: null, markdown: null, meta: null };
-	const provider = 'omlx';
+	const provider = 'glm';
 	const statements = [
 		env.DB.prepare("INSERT INTO entities(id,kind,created_at,status,generation,report_json,updated_at) VALUES(?,'report',?,'queued',1,?,?)")
 			.bind(id,createdAt,JSON.stringify(report),createdAt)
@@ -422,7 +422,7 @@ export async function retryCloudReport(env: CloudflareEnv, id: string) {
 			.bind(now,now,id));
 	} else {
 		statements.push(env.DB.prepare("INSERT INTO jobs(id,entity_id,kind,entity_generation,state,provider,payload,created_at,updated_at) SELECT ?,id,'report',generation,'queued',?,'{}',?,? FROM entities WHERE id=? AND status='queued' AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM jobs active WHERE active.entity_id=entities.id AND active.state IN ('queued','leased'))")
-			.bind(crypto.randomUUID(),'omlx',now,now,id));
+			.bind(crypto.randomUUID(),'glm',now,now,id));
 	}
 	const result = await env.DB.batch(statements);
 	const changed = ((result[0] as { meta?: { changes?: number } })?.meta?.changes ?? 0) === 1;

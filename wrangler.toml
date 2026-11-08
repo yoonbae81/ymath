@@ -9,7 +9,7 @@ routes = [
 
 [vars]
 ITEM_ANALYSIS_BACKEND = "baton"
-OMLX_BASE_URL = "https://llm.xcv.kr/v1"
+ZAI_BASE_URL = "https://api.z.ai/api/coding/paas/v4"
 S3_ENDPOINT = "https://s3.xcv.kr"
 S3_BUCKET = "ymath"
 S3_REGION = "us-east-1"
