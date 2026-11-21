@@ -29,6 +29,7 @@ Environment=BODY_SIZE_LIMIT=30M
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 # 비밀이 필요한 값은 저장소에 넣지 않고 별도 파일에 둔다(chmod 600):
 #   ~/.config/ymath.env  →  S3_*(사진 백업 5개)  STUDENT_NAME=...
+EnvironmentFile=-%h/.config/ymath.env
 # GLM 주소·API 키·모델은 user/config/providers.json 의 zai 항목 한 곳에서 관리한다(커밋 안 됨).
 # 선택: Environment=DATA_DIR=%h/ymath-data   (기본 ./user/data)
 # 선택: Environment=OCR_MODEL=glm-4.6v       (기본값과 동일 — providers.json 의 zai 주소·키를 쓴다)
