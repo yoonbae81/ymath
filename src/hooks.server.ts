@@ -4,6 +4,7 @@ import { base } from '$app/paths';
 import type { Session } from '$lib/types';
 import { safeErrorForLog } from '$lib/server/log';
 import { consumeRateLimit } from '$lib/server/cloudflare/repository';
+import { sameOriginOk } from '$lib/server/guard';
 import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 import { NODE_RUNTIME } from '$lib/server/runtime-target';
 
@@ -24,11 +25,12 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 	const isInngestSdk = relative === '/api/inngest';
 	if (!response && event.request.method !== 'GET' && event.request.method !== 'HEAD' && !relative.startsWith('/api/runner/') && !isInngestSdk) {
-		const site = event.request.headers.get('sec-fetch-site');
-		const origin = event.request.headers.get('origin');
-		let originOk = true;
-		if (origin) { try { originOk = new URL(origin).host === (event.request.headers.get('x-forwarded-host') ?? event.request.headers.get('host') ?? event.url.host); } catch { originOk = false; } }
-		if (site === 'cross-site' || !originOk || event.request.headers.get(AJAX_HEADER) !== AJAX_VALUE) response = new Response(JSON.stringify({ message: '허용되지 않은 요청입니다' }), { status: 403, headers: { 'content-type': 'application/json' } });
+		if (
+			event.request.headers.get('sec-fetch-site') === 'cross-site' ||
+			!sameOriginOk(event.request, event.url.host) ||
+			event.request.headers.get(AJAX_HEADER) !== AJAX_VALUE
+		)
+			response = new Response(JSON.stringify({ message: '허용되지 않은 요청입니다' }), { status: 403, headers: { 'content-type': 'application/json' } });
 	}
 	if (!response && event.platform?.env?.DB && event.request.method !== 'GET' && event.request.method !== 'HEAD' && !relative.startsWith('/api/runner/') && !isInngestSdk) {
 		let address = '';

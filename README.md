@@ -107,16 +107,16 @@ npm test               # 단위 테스트
 npm run check          # 타입 검사
 ```
 
-## 배포 (이 호스트에 설치됨)
+## 배포 (s3 박스에 설치됨)
 
-- 앱은 **`/math` 하위 경로**에서 응답한다(`vite.config.ts`의 `paths.base` 기본값 `/math`, 빌드 시점 고정). 즉 모든 경로에 `/math` 이 붙는다. 루트(`/`)로 내려앉히려면 `BASE_PATH=/ npm run build` 로 다시 빌드하고, `PUBLIC_URL` 과 터널 경로도 함께 바꿔야 한다.
-- systemd 사용자 서비스 `ymath`가 `0.0.0.0:3141`에서 실행된다(`user/deploy/ymath.service`).
-- 외부는 cloudflared 터널 `math`가 `math.example.com` → `127.0.0.1:3141`로 연결한다. TLS는 Cloudflare 엣지가 담당하므로 자체 인증서·nginx가 없다.
+- 앱은 **`/math` 하위 경로**에서 응답한다(`vite.config.ts`의 `paths.base` 기본값 `/math`, 빌드 시점 고정). 즉 모든 경로에 `/math` 이 붙는다. 루트(`/`)로 내려앉히려면 `BASE_PATH=/ npm run build` 로 다시 빌드하고, Caddy 경로와 `ORIGIN` 도 함께 바꿔야 한다.
+- systemd 사용자 서비스 `ymath`가 s3 박스(10.0.0.9)의 `0.0.0.0:3141`에서 실행된다(`user/deploy/ymath.service`).
+- 공개 주소는 **`https://study.xcv.kr/math/`**. edge Caddy가 `study.xcv.kr` 사이트 블록의 `handle /math/*`에서 `10.0.0.9:3141`로 프록시하고, 앞의 Cloudflare는 와일드카드 CrowdSec 워커를 경유한다. TLS는 Cloudflare·Caddy 엣지가 담당하므로 자체 인증서가 없다.
   사진 업로드를 위해 `BODY_SIZE_LIMIT=30M`을 서비스에 넣는다(기본 512KB면 폰 사진이 413으로 막힌다).
-- 접속: 내부망 폰/PC는 `http://192.168.1.x:3141/math/upload` (로그인 없음), 외부는 `https://math.example.com/math/upload` (PASSWORD 로그인).
+- 접속: **`https://study.xcv.kr/math/upload`** (로그인 없음 — 가족 앱). 정식 출처는 유닛의 `ORIGIN` 환경변수 하나로 관리한다.
 
 ```sh
-npm run build && systemctl --user restart ymath   # 코드·설정(workbooks.json은 재시작 불필요) 반영
+npm run build:node && systemctl --user restart ymath   # 코드·설정(workbooks.json은 재시작 불필요) 반영. build:node 필수 — npm run build는 Cloudflare 어댑터만 빌드해 .build 가 갱신되지 않는다
 systemctl --user status ymath                     # 상태
 journalctl --user -u ymath -f                     # 로그
 ```
@@ -127,7 +127,7 @@ journalctl --user -u ymath -f                     # 로그
 
 ```sh
 tar -cf - src/lib/server/queue.ts src/lib/server/store.ts | ssh edge 'tar -xf - -C /opt/ymath'
-ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
+ssh edge 'ssh y@10.0.0.9 "cd /opt/ymath && npm run build:node && systemctl --user restart ymath"'
 ```
 
 ## 운영 점검 · 장애 대응
@@ -145,7 +145,7 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
 - **`분석 시간 초과(900초)`**: 이 한도를 넘으면 실패로 기록되고 1회 자동 재시도한다(`ANALYZE_MAX_ATTEMPTS`, 기본 2). 한도가 모자라면 `ANALYZE_TIMEOUT_MS` 를 올린다.
 - **`정답 노출 가드레일 위반`**: LLM 결과에 정답·등식이 섞여 저장하지 않고, 위반 사유를 힌트로 주어 1회 자동 재지도로 다시 돌린다. 두 번 다 실패하면 `failed` 로 남고 사유가 화면에 보인다.
 - **재시도 큐 되돌리기**: `failed` 항목이 한꺼번에 쌓였을 때 서버를 재시작해도 `queued` 로 되돌아가지 않는다(재시작은 진행 중 항목만 회수한다). 그럴 때는 항목 `record.json` 을 `queued` 로 되돌린 뒤 서비스를 재시작한다.
-- **비밀값**: `user/config/providers.json` 과 `~/.config/ymath.env` 에 API 키·비밀번호가 있다. 로그나 문서에 값이 새지 않게 하고, 커밋 대상이 아니다.
+- **비밀값**: `user/config/providers.json` 과 `~/.config/ymath.env` 에 API 키·S3 접속 비밀이 있다. 로그나 문서에 값이 새지 않게 하고, 커밋 대상이 아니다.
 
 ## 환경변수
 
@@ -158,29 +158,8 @@ ssh edge 'cd /opt/ymath && npm run build && systemctl --user restart ymath'
 | `OCR_MODEL` | `glm-4.6v` | z.ai OpenAI 호환 `chat/completions`로 직접 호출할 OCR(비전) 모델. 주소·API 키는 `providers.json`의 `zai` 설정을 함께 쓴다 |
 | `OCR_TIMEOUT_MS` | `120000` | OCR 시간 제한 |
 | `USER_DIR`, `PROMPTS_DIR`, `CONFIG_DIR` | `./user`, `./user/prompts`, `./user/config` | 위치 변경 |
-| `PASSWORD` | (없음) | 내부망 밖에서 들어올 때 쓰는 비밀번호. **없으면 밖에서는 아무도 못 들어온다** |
-| `TRUSTED_CIDRS` | `192.168.1.0/24` | 로그인을 생략하는 내부망(쉼표로 여러 개, IPv4 만). 개발할 때는 `127.0.0.1` 을 더한다 |
-| `PUBLIC_URL` | (없음) | 밖에서 접속하는 주소(예: `https://math.example.com`). 공유 링크를 이 주소로 만든다 |
-| `SESSION_SECRET` | (자동) | 쿠키·링크 서명 키. 없으면 `user/data/session-secret` 에 만들어 쓴다. 바꾸거나 지우면 모든 로그인과 링크가 무효가 된다 |
-| `GUEST_PHOTOS` | (꺼짐) | `1` 이면 읽기 전용 방문자에게 원본 오답 사진도 보여 준다 |
-
-## 접근 제어 (인터넷에 열 때)
-
-계정·DB 없이 서명(HMAC)만 쓴다(`src/lib/server/auth.ts`, 게이트는 `src/hooks.server.ts`).
-
-| 누가 | 어떻게 | 권한 |
-| --- | --- | --- |
-| 내부망(`TRUSTED_CIDRS`) | 로그인 없음 | 전부 |
-| 밖의 가족 | `/login` 에서 `PASSWORD` → 쿠키 30일 | 전부 |
-| 지인 | 가족이 만든 공유 링크 `/s/<만료>.<서명>` → 쿠키(링크와 같은 시각에 만료) | **읽기 전용**(문제별·영역별·작업상태 화면) |
-
-- 공유 링크는 화면 오른쪽 위 **🔗** 에서 만든다(가족 권한에서만 노출). 읽기 전용 게스트에게는 1시간 링크 만들기 아이콘이 차단되어 링크를 임의로 연장할 수 없으며, API(`/api/share`)도 403 Forbidden으로 엄격 차단된다.
-- 게스트 세션 쿠키는 내부망(Wi-Fi) IP 판정보다 우선 적용되므로, 집 내부망에서 공유 링크를 열어 테스트할 때도 읽기 전용 권한이 정확히 유지된다.
-- 공유 링크는 만든 시각부터 정확히 1시간 유효하고, 서버에 저장하지 않는다. 링크만 따로 취소할 수는 없다. 급하면 `session-secret` 을 지우고 재시작하면 모든 로그인·링크가 무효가 된다.
-- 로그인은 IP 별로 10분에 5번까지 틀릴 수 있다.
-- **내부망 판정**: 소켓이 루프백일 때만 `X-Real-IP` 를 믿는다. cloudflared 는 `X-Real-IP` 를 보내지 않고 소켓이 루프백이라, 터널 요청은 `127.0.0.1` 로 판정되어 로그인이 필요하다. 내부망 직접 접속(`192.168.1.x`)은 소켓 주소 그대로 믿어 로그인이 없다. `CF-Connecting-IP` 헤더가 있으면 어떤 경우에도 내부망으로 보지 않는다. 서비스에 `ADDRESS_HEADER`(예: `x-forwarded-for`)를 설정하면 **안 된다** — 어댑터가 소켓 주소 대신 그 헤더만 읽게 되어, 헤더가 없는 요청에서 클라이언트 주소를 못 얻어(`ip=unknown`) 내부망 자동 신뢰가 전부 무효화된다.
-- **HTTPS 는 Cloudflare 엣지에서 처리**한다. 터널은 내부에 `X-Forwarded-Proto(https)`, `X-Forwarded-Host`, `CF-Connecting-IP` 를 넘긴다. 내부망 직접 접속은 `http://192.168.1.x:3141` 그대로 쓴다.
-- 배포 전에 **셀룰러 데이터(와이파이 끔)로 접속해 로그인 화면이 뜨는지** 꼭 확인한다. 공유기가 바깥에서 온 요청을 내부 주소로 바꿔 전달(SNAT)하면 밖에서 온 요청이 내부망으로 보일 수 있다.
+| `ORIGIN` | (없음) | **정식 공개 출처** 하나(예: `https://study.xcv.kr`). `guard.ts`의 Origin 검사(`sameOriginOk`)가 이 주소만 정식 출처로 받아들이고, 어댑터의 폼 CSRF Origin 검사도 같은 값을 쓴다. 없으면 프록시가 전달한 Host 일치로 검사한다(테스트·로컬용) |
+| `S3_*`(5개) | (없음) | 사진 내구 백업용 MinIO(`s3.xcv.kr`) 접속 정보. 백업에 실패하면 업로드 자체를 거절한다 |
 
 ## 보안 메모
 
