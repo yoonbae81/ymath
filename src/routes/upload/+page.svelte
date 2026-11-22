@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { AJAX_HEADER, AJAX_VALUE } from '$lib/ajax';
 	import { STATUS_LABEL, STATUS_TONE, hasActive } from '$lib/status';
+	import { renderMath } from '$lib/math';
 	import { formatTime } from '$lib/time';
 	import type { Workbook } from '$lib/types';
 
@@ -138,7 +139,7 @@
 					<img src="{base}/api/items/{r.id}/image" alt="" loading="lazy" />
 					<span class="info">
 						<strong>{r.workbook}</strong>
-						<small>{time(r.created_at)}{r.asks ? ` · ${r.asks}` : ''}</small>
+						<small>{time(r.created_at)}{@html r.asks ? ` · ${renderMath(r.asks)}` : ''}</small>
 					</span>
 					<span class="badge {STATUS_TONE[r.status]}">{STATUS_LABEL[r.status]}</span>
 				</a>

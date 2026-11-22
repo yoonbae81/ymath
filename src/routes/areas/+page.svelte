@@ -1,5 +1,4 @@
 <script lang="ts">
-	import 'katex/dist/katex.min.css';
 	import { goto, invalidate } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { page } from '$app/state';

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import 'katex/dist/katex.min.css';
 	import { goto, invalidate } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
@@ -256,7 +255,7 @@
 					</div>
 					<span class="badge date">{formatDate(i.created_at)}</span>
 				</div>
-				<p class="title">{a?.asks ?? ''}</p>
+				<p class="title">{@html a ? renderMath(a.asks) : ''}</p>
 				{#if a?.classification.unit_major}
 					<small>{a.classification.unit_major}</small>
 				{/if}

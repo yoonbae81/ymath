@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '$lib/ui.css';
+	import 'katex/dist/katex.min.css'; // 수식은 어느 화면에도 나올 수 있다 — 전역으로 한 번만 읽는다
 	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import favicon from '$lib/assets/favicon.svg';

@@ -2,6 +2,7 @@
 	import { invalidate } from '$app/navigation';
 	import { base } from '$app/paths';
 	import { hasActive, STATUS_LABEL, STATUS_TONE } from '$lib/status';
+	import { renderMath } from '$lib/math';
 	import { problemNumber } from '$lib/report-links';
 	import { formatDate, formatDateTimeSeconds } from '$lib/time';
 	import {
@@ -170,7 +171,7 @@
 								<span class="badge date time-mobile">{formatDate(i.created_at)}</span>
 							</div>
 							{#if i.analysis}
-								<p class="q-asks"><b>묻는 것:</b> {i.analysis.asks}</p>
+								<p class="q-asks"><b>묻는 것:</b> {@html renderMath(i.analysis.asks)}</p>
 								{#if i.analysis.classification.unit_major}
 									<div class="q-tags">
 										<span class="tag">{i.analysis.classification.unit_major}{i.analysis.classification.unit_minor ? ` › ${i.analysis.classification.unit_minor}` : ''}</span>
