@@ -24,6 +24,12 @@ const plain = (s: string) =>
 const MATH = /\$\$([\s\S]+?)\$\$|\$([^$\n]+?)\$/g;
 
 /**
+ * KaTeX 는 text 모드에서도 `_` 를 특수문자로 취급해 ParseError 를 낸다. 분석 모델이 학생 풀이의
+ * 빈칸을 `\text{_}` 로 쓰는 일이 잦아, KaTeX 가 받는 `\text{\_}` 로 고쳐 준다.
+ */
+const normalizeMath = (s: string) => s.replaceAll(String.raw`\text{_}`, String.raw`\text{\_}`);
+
+/**
  * `$...$`, `$$...$$` 수식을 KaTeX 로 렌더링한 HTML 을 돌려준다.
  * 수식이 아닌 구간은 모두 이스케이프하므로 LLM 출력을 {@html} 로 넣어도 안전하다.
  * (수식 안의 `<` 같은 문자는 KaTeX 가 처리하므로 먼저 이스케이프하지 않는다.)
@@ -35,7 +41,7 @@ export function renderMath(text: string): string {
 		out += plain(text.slice(last, m.index));
 		const display = m[1] !== undefined;
 		try {
-			out += katex.renderToString((m[1] ?? m[2]).trim(), {
+			out += katex.renderToString(normalizeMath((m[1] ?? m[2]).trim()), {
 				...KATEX_OPTS,
 				displayMode: display
 			});
@@ -126,7 +132,7 @@ export function renderInline(text: string): string {
 	const withSlots = text.split(SLOT).join('').replace(MATH, (m, display: string | undefined, inline: string | undefined) => {
 		let html: string;
 		try {
-			html = katex.renderToString((display ?? inline ?? '').trim(), { ...KATEX_OPTS, displayMode: display !== undefined });
+			html = katex.renderToString(normalizeMath((display ?? inline ?? '').trim()), { ...KATEX_OPTS, displayMode: display !== undefined });
 		} catch {
 			html = escapeHtml(m);
 		}

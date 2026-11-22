@@ -20,6 +20,13 @@ describe('renderMath', () => {
 		expect(html).not.toContain('&amp;lt;');
 	});
 
+	it('\text{_} 빈칸은 ParseError 없이 밑줄 문자로 렌더링한다', () => {
+		const html = renderMath('$2\\ \\text{_}\\ \\text{_}\\ \\text{_}$');
+		expect(html).toContain('class="katex"');
+		expect(html).not.toContain('ParseError');
+		expect(html).not.toContain('text{_}');
+	});
+
 	it('잘못된 수식도 예외 없이 처리한다', () => {
 		expect(() => renderMath('$\\frac{$')).not.toThrow();
 		expect(() => renderMath('$\\badcommand{x}$')).not.toThrow();
