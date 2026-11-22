@@ -98,7 +98,9 @@ async function chatCompletion(o: {
 		const choice = data.choices?.[0];
 		const content = choice?.message?.content ?? '';
 		if (!content.trim()) {
-			throw new Error(`${o.label} 응답 내용이 비었음 (finish_reason: ${choice?.finish_reason})`);
+			const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens;
+			const detail = reasoningTokens ? `, reasoning_tokens: ${reasoningTokens}` : '';
+			throw new Error(`${o.label} 응답 내용이 비었음 (finish_reason: ${choice?.finish_reason}${detail})`);
 		}
 		return content;
 	} catch (e: any) {
@@ -114,10 +116,12 @@ async function chatCompletion(o: {
 /**
  * 모델별 z.ai 요청 옵션. GLM-5.3-Flash·GLM-5V 계열은 추론을 강제해서 thinking 을 끌 수 없으므로
  * 텍스트 전용 모델(glm-5.3)일 때만 thinking 을 끈다. 추론 토큰이 응답 JSON 과 함께 max_tokens 를
- * 소비하므로 넉넉하게 둔다(예전 z.ai 경로의 실측 규약).
+ * 소비하므로 넉넉하게 둔다. 16384 로 두면 무거운 시험지 페이지(실제 분석 프롬프트는 지침+교육과정+
+ * 분류 체계+OCR 텍스트+스키마가 결합)에서 추론만으로 상한을 소진해 finish_reason: length 로
+ * 본문이 비어 실패했다(2026-11-22 실측) — API 는 98304 까지 받는 것을 확인했다.
  */
 const zaiExtraBody = (model: string): Record<string, unknown> => ({
-	max_tokens: 16384,
+	max_tokens: 65536,
 	...(/flash|5v/.test(model) ? {} : { thinking: { type: 'disabled' as const } })
 });
 
