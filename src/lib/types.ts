@@ -2,9 +2,12 @@
 export const PROVIDERS = ['agy', 'glm'] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const PROVIDER_LABEL: Record<Provider, string> = { agy: 'Gemini 3.8 (Agy)', glm: 'GLM' };
+/** 재분석 폼의 라디오 버튼에 보여주는 짧은 라벨 */
+export const PROVIDER_SHORT: Record<Provider, string> = { agy: 'Gemini', glm: 'GLM' };
 
 /** 분석 UI 에서 재분석 버튼 옆에 보여주는 프로바이더 옵션 — baton 카탈로그와는 무관하다(baton-catalog.ts 참고) */
-export const AVAILABLE_PROVIDERS: readonly { id: Provider; label: string }[] = PROVIDERS.map((id) => ({ id, label: PROVIDER_LABEL[id] }));
+export const AVAILABLE_PROVIDERS: readonly { id: Provider; label: string; short: string }[] =
+	PROVIDERS.map((id) => ({ id, label: PROVIDER_LABEL[id], short: PROVIDER_SHORT[id] }));
 
 /** 삭제된 LLM. 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
 const LEGACY_PROVIDER_LABEL: Record<string, string> = {

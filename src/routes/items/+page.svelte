@@ -127,6 +127,7 @@
 	function show(id: string | null) {
 		actionError = null;
 		raComment = '';
+		selectedProvider = AVAILABLE_PROVIDERS[0].id; // 라디오 기본 선택(첫 항목) — 항목을 열 때마다 초기화
 		analyses = [];
 		tabIdx = null;
 		loadedKey = '';
@@ -425,7 +426,6 @@
 				</section>
 
 				{#if !readonly}
-					{@const lastProvider = open.meta?.provider}
 					<section class="reanalyze">
 						<h3 class="band">다시 분석</h3>
 						<textarea
@@ -436,11 +436,14 @@
 							bind:value={raComment}
 						></textarea>
 						<div class="ra-actions">
-							<select bind:value={selectedProvider} aria-label="분석 모델">
+							<div class="ra-model" role="radiogroup" aria-label="분석 모델">
 								{#each AVAILABLE_PROVIDERS as p (p.id)}
-									<option value={p.id}>{p.label}{p.id === lastProvider ? ' · 이전' : ''}</option>
+									<label class="ra-model-opt">
+										<input type="radio" name="ra-provider" value={p.id} bind:group={selectedProvider} />
+										{p.short}
+									</label>
 								{/each}
-							</select>
+							</div>
 							<button class="btn primary" disabled={busy} onclick={() => reanalyze(open)}>🔄 다시 분석</button>
 						</div>
 					</section>
@@ -954,16 +957,21 @@
 		display: flex;
 		gap: 10px;
 		margin-top: 10px;
+		align-items: center;
 	}
-	.ra-actions select {
-		flex: 1 1 160px;
-		padding: 10px;
-		border-radius: 12px;
-		border: 1px solid var(--line);
-		background: var(--surface);
-		color: var(--text);
+	.ra-model {
+		display: flex;
+		gap: 14px;
+		flex: 0 0 auto;
+	}
+	.ra-model-opt {
+		display: flex;
+		align-items: center;
+		gap: 5px;
 		font: inherit;
-		min-width: 0;
+		color: var(--text);
+		cursor: pointer;
+		white-space: nowrap;
 	}
 	.btn.primary {
 		background: var(--accent);
