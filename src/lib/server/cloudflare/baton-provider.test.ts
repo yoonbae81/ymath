@@ -9,11 +9,11 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { PROVIDERS, PROVIDER_LABEL, providerLabel, type Provider } from '$lib/types';
 
-it('labels GLM as the only registered provider', () => {
-  expect(PROVIDER_LABEL).toEqual({ glm: 'GLM' });
+it('labels current and legacy providers', () => {
+  expect(PROVIDER_LABEL).toEqual({ agy: 'Gemini 3.8 (Agy)', glm: 'GLM' });
   // 삭제된 provider 는 레거시 라벨로 계속 읽힌다
   expect(providerLabel('omlx')).toBe('Qwen (oMLX)');
-  expect(providerLabel('agy')).toBe('Agy (Gemini)');
+  expect(providerLabel('zai')).toBe('GLM 5.3 (Z.AI)');
 });
 
 /* --------------------------------------------------------------------------- */
@@ -35,14 +35,16 @@ describe('catalog sync & shape', () => {
     expect(batonCatalog.profiles).toEqual(parsed.profiles);
   });
 
-  it('PROVIDERS equals catalog provider ids in stable order', () => {
-    expect([...PROVIDERS]).toEqual(Object.keys(batonCatalog.providers));
+  it('node PROVIDERS covers every catalog provider (baton은 그 부분집합)', () => {
+    for (const id of Object.keys(batonCatalog.providers)) {
+      expect(PROVIDERS).toContain(id);
+    }
   });
 
-  it('PROVIDERS contains exactly glm', () => {
-    expect(PROVIDERS).toEqual(['glm']);
+  it('baton catalog remains glm-only — Agy CLI 는 node 런타임 전용이다', () => {
+    expect(Object.keys(batonCatalog.providers)).toEqual(['glm']);
+    expect(PROVIDERS).toEqual(['agy', 'glm']);
     expect(PROVIDERS).not.toContain('omlx');
-    expect(PROVIDERS).not.toContain('agy');
   });
 
   it('batonDefaultProvider is glm', () => {

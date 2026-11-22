@@ -1,4 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Provider } from '$lib/types';
 import { settings } from './config';
 import {
@@ -144,8 +147,84 @@ async function structuredWithZai(c: StructuredCall): Promise<LlmOutput> {
 	return { output: parseJsonBody('zai', content), model: zaiModel };
 }
 
+/** Agy(Antigravity CLI, Gemini) 레인 — 사진은 프롬프트의 파일 경로로 전달하고 CLI 가 직접 연다 */
+
+/** 셸 명령 문자열로 들어가는 설정값은 인용이 필요 없는 문자만 받는다 */
+const shellSafe = (v: string, what: string) => {
+	if (!/^[A-Za-z0-9_@+./-]+$/.test(v)) throw new Error(`${what}에 셸 특수문자가 있습니다: ${v}`);
+	return v;
+};
+
+/** 프롬프트 파일 이름 — dir 에 만들고 호출 뒤 지운다. CLI 인자 직접 전달은 Linux 128KB 인자 상한(E2BIG)에 걸린다 */
+const AGY_PROMPT_FILE = 'agy-prompt.txt';
+
+/** Agy CLI 한 번 호출. 프롬프트 파일을 읽어 print 모드로 실행하고 표준 출력을 반환한다 */
+function agyCliPrint(o: { dir: string; prompt: string; bin: string; model: string; timeoutMs: number }): Promise<string> {
+	const bin = shellSafe(o.bin, 'agy bin');
+	const model = shellSafe(o.model, 'agy model');
+	writeFileSync(join(o.dir, AGY_PROMPT_FILE), o.prompt, 'utf8');
+	return new Promise((resolve, reject) => {
+		// detached + 프로세스 그룹 kill: 타임아웃 때 agy 가 남긴 자식까지 정리한다
+		const child = spawn(
+			'sh',
+			['-c', `exec '${bin}' --print "$(cat ${AGY_PROMPT_FILE})" --model '${model}' --dangerously-skip-permissions`],
+			{ cwd: o.dir, stdio: ['ignore', 'pipe', 'pipe'], detached: true }
+		);
+		const out: Buffer[] = [];
+		const err: Buffer[] = [];
+		const timer = setTimeout(() => {
+			try { process.kill(-child.pid!, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
+			reject(new Error(`분석 시간 초과(${Math.round(o.timeoutMs / 1000)}초)`));
+		}, o.timeoutMs);
+		child.stdout.on('data', (d: Buffer) => out.push(d));
+		child.stderr.on('data', (d: Buffer) => err.push(d));
+		child.on('error', (e) => {
+			clearTimeout(timer);
+			reject(new Error(`Agy CLI 실행 실패(${o.bin}): ${e.message}`));
+		});
+		child.on('close', (code) => {
+			clearTimeout(timer);
+			const stdout = Buffer.concat(out).toString('utf8');
+			const stderr = Buffer.concat(err).toString('utf8');
+			if (code === 0 && stdout.trim()) return resolve(stdout);
+			const tail = (stderr || stdout || '(출력 없음)').trim().slice(-300);
+			if (isQuotaOrRateLimitError(`${stdout}\n${stderr}`)) {
+				return reject(new QuotaExceededError(`Agy 할당량 소진 또는 제한: ${tail.slice(0, 200)}`));
+			}
+			reject(new Error(`Agy CLI 오류(exit ${code}): ${tail}`));
+		});
+	});
+}
+
+async function structuredWithAgy(c: StructuredCall): Promise<LlmOutput> {
+	const s = settings();
+	try {
+		const text = await agyCliPrint({
+			dir: c.dir,
+			prompt: promptWithSchema(c.prompt, c.schema),
+			bin: s.agyBin,
+			model: s.agyModel,
+			timeoutMs: s.analyzeTimeoutMs
+		});
+		return { output: parseJsonBody('agy', text), model: s.agyModel };
+	} finally {
+		try { unlinkSync(join(c.dir, AGY_PROMPT_FILE)); } catch { /* 없어도 무관 */ }
+	}
+}
+
+/** 텍스트 전용 Agy 호출. 프롬프트는 임시 디렉터리의 파일로 전달하고 정리한다 */
+async function textWithAgy(prompt: string, bin: string, model: string, timeoutMs: number): Promise<string> {
+	const dir = mkdtempSync(join(tmpdir(), 'ymath-agy-'));
+	try {
+		return await agyCliPrint({ dir, prompt, bin, model, timeoutMs });
+	} finally {
+		try { unlinkSync(join(dir, AGY_PROMPT_FILE)); } catch { /* 없어도 무관 */ }
+	}
+}
+
 /** 지정한 LLM 으로 사진을 분석해 구조화된 결과를 받는다. */
 export function runStructured(provider: Provider, call: StructuredCall): Promise<LlmOutput> {
+	if (provider === 'agy') return structuredWithAgy(call);
 	if (provider === 'glm') return structuredWithZai(call);
 	// 옛 기록의 requested_provider 같은 값이 타입 검사를 우회해 올 수 있다
 	return Promise.reject(new Error(`사용할 수 없는 LLM 입니다: ${provider}`));
@@ -153,21 +232,26 @@ export function runStructured(provider: Provider, call: StructuredCall): Promise
 
 /** 텍스트만 주고받는 호출(사진·스키마 없음). 보고서 작성처럼 프롬프트 → 본문만 필요한 곳에서 쓴다. */
 export async function runText(provider: Provider, prompt: string): Promise<{ text: string; model: string }> {
-	if (provider !== 'glm') throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
 	const s = settings();
-	if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우세요');
-	if (!s.zaiBaseUrl || !s.zaiModel)
-		throw new Error('user/config/providers.json 의 zai 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
-	const { zaiBaseUrl, zaiApiKey, zaiModel } = s;
-	const text = await chatCompletion({
-		label: 'z.ai',
-		baseUrl: zaiBaseUrl,
-		apiKey: zaiApiKey,
-		model: zaiModel,
-		messages: [{ role: 'user', content: prompt }],
-		jsonMode: false,
-		extraBody: zaiExtraBody(zaiModel),
-		timeoutMs: s.analyzeTimeoutMs
-	});
-	return { text: text.trim(), model: zaiModel };
+	if (provider === 'agy') {
+		const text = await textWithAgy(prompt, s.agyBin, s.agyModel, s.analyzeTimeoutMs);
+		return { text: text.trim(), model: s.agyModel };
+	}
+	if (provider === 'glm') {
+		if (!s.zaiApiKey) throw missingKeyError('Z.AI', 'user/config/providers.json 의 zai apiKey 를 채우세요');
+		if (!s.zaiBaseUrl || !s.zaiModel)
+			throw new Error('user/config/providers.json 의 zai 에 baseUrl 과 models[0].id 를 채우세요 — 환경변수 우회나 하드코드 폴백은 없다');
+		const text = await chatCompletion({
+			label: 'z.ai',
+			baseUrl: s.zaiBaseUrl,
+			apiKey: s.zaiApiKey,
+			model: s.zaiModel,
+			messages: [{ role: 'user', content: prompt }],
+			jsonMode: false,
+			extraBody: zaiExtraBody(s.zaiModel),
+			timeoutMs: s.analyzeTimeoutMs
+		});
+		return { text: text.trim(), model: s.zaiModel };
+	}
+	throw new Error(`사용할 수 없는 LLM 입니다: ${provider}`);
 }

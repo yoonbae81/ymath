@@ -6,6 +6,7 @@ import type { RequestHandler } from './$types';
 import { cloudItem, queueCloudReanalysis } from '$lib/server/cloudflare/runtime';
 import { assertItemBatonConfigured, publishItemOutboxDirect } from '$lib/server/cloudflare/item-publication';
 import { NODE_RUNTIME } from '$lib/server/runtime-target';
+import { settings } from '$lib/server/config';
 const isValidId = (id: string) => /^\d{8}-\d{6}-[a-z0-9]{4}$/.test(id);
 
 /** 재분석. 카탈로그(provider)에서 선택한 LLM 을 사용한다. 생략 시 default. */
@@ -16,7 +17,8 @@ export const POST: RequestHandler = async ({ params, request, url, getClientAddr
 	if (!isValidId(params.id)) error(400, '잘못된 항목 ID 형식입니다');
 	const wanted = url.searchParams.get('provider');
 	if (wanted !== null && !PROVIDERS.includes(wanted as Provider)) error(400, `알 수 없는 LLM 입니다: ${wanted}`);
-	const selectedProvider = wanted ?? batonDefaultProvider;
+	// node 런타임 기본값은 설정(providers.json 의 agy 항목 여부)을 따르고, baton(cloud) 기본값은 카탈로그를 따른다
+	const selectedProvider = wanted ?? (NODE_RUNTIME ? settings().provider : batonDefaultProvider);
 	let record;
 	if (platform?.env?.DB) record = await cloudItem(platform.env, params.id);
 	else if (NODE_RUNTIME) record = (await import('$lib/server/store')).readRecord(params.id);

@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { type Analysis, type Feedback, type ItemRecord, type Provider } from '$lib/types';
-import { promptsDir, renderPrompt } from './config';
+import { PROVIDERS, type Analysis, type Feedback, type ItemRecord, type Provider } from '$lib/types';
+import { renderPrompt, settings, promptsDir } from './config';
 import { checkGuardrail } from './guardrail';
 import { IMAGE_FILE } from './image';
 import { runStructured } from './llm';
@@ -48,12 +48,15 @@ export function promptVersion(guideline: string, curriculum: string): string {
 }
 
 /**
- * 과거 requested_provider를 변경하지 않고 실행할 때만 GLM으로 고정한다.
+ * 기록에 명시된 provider를 존중한다(재분석에서 사용자가 고른 것). 없거나 옛 값이면
+ * 설정 디폴트(settings().provider — providers.json 의 agy 항목 여부로 결정)를 따른다.
  */
-export const providerFor = (record: ItemRecord): Provider =>
-	'glm';
+export const providerFor = (record: ItemRecord): Provider => {
+	const wanted = record.requested_provider;
+	return wanted && (PROVIDERS as readonly string[]).includes(wanted) ? (wanted as Provider) : settings().provider;
+};
 
-/** 실제 분석기: GLM(z.ai)을 호출해 구조화된 결과를 받는다 */
+/** 실제 분석기: provider별 레인(agy=Gemini CLI, glm=z.ai)으로 구조화된 결과를 받는다 */
 export const analyzeItem: Analyzer = async ({ record, dir, ocrText, feedback, hint, knownPatterns }) => {
 	const provider = providerFor(record);
 	const guideline = renderPrompt(readFileSync(join(promptsDir(), 'analyze.md'), 'utf8'));

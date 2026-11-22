@@ -130,16 +130,23 @@ describe('POST /api/items/[id]/retry', () => {
 		expect(readRecord(r.id)).toMatchObject({ status: 'queued', requested_provider: 'glm' });
 		expect(enqueue).toHaveBeenCalledWith(r.id);
 
+		// 현재 provider(agy)도 받는다
+		updateRecord(r.id, (x) => {
+			x.status = 'done';
+		});
+		expect((await withProvider('agy')).status).toBe(202);
+		expect(readRecord(r.id)).toMatchObject({ status: 'queued', requested_provider: 'agy' });
+
 		// 삭제된 provider는 done/failed 상태에서도 거부한다
 		updateRecord(r.id, (x) => {
 			x.status = 'done';
 		});
-		await expect(withProvider('agy')).rejects.toMatchObject({ status: 400 });
+		await expect(withProvider('zai')).rejects.toMatchObject({ status: 400 });
 		await expect(withProvider('omlx')).rejects.toMatchObject({ status: 400 });
-		expect(readRecord(r.id)!.requested_provider).toBe('glm');
+		expect(readRecord(r.id)!.requested_provider).toBe('agy');
 	});
 
-	it('provider를 생략하면 과거 선택 대신 GLM으로 재분석한다', async () => {
+	it('provider를 생략하면 설정 디폴트(테스트 환경: zai만 있으므로 glm)로 재분석한다', async () => {
 		const r = createItem(WB);
 		updateRecord(r.id, (x) => {
 			x.status = 'failed';

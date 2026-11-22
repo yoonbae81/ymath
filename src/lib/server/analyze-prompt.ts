@@ -69,7 +69,10 @@ export function buildPrompt(p: PromptInput): string {
 		'---',
 		'# 이번 오답',
 		`- 문제집: ${p.record.workbook.name}`,
-		'- 사진: 이 메시지에 첨부된 이미지입니다. 반드시 직접 보고 분석하세요',
+		'- 사진: ' +
+			(p.provider === 'agy'
+				? `파일 ${p.imagePath} 를 파일 열기 도구로 직접 열어 보고 분석하세요`
+				: '이 메시지에 첨부된 이미지입니다. 반드시 직접 보고 분석하세요'),
 		'',
 		'## OCR 텍스트 (참고용, 오류 가능)',
 		ocr,

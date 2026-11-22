@@ -67,7 +67,7 @@ describe('GLM HTTP와 공통 JSON/스키마', () => {
 		const fetchMock = vi.fn();
 		vi.stubGlobal('fetch', fetchMock);
 		await expect(runStructured('omlx' as never, call())).rejects.toThrow('사용할 수 없는 LLM 입니다: omlx');
-		await expect(runText('agy' as never, 'x')).rejects.toThrow('사용할 수 없는 LLM 입니다: agy');
+		await expect(runText('codex' as never, 'x')).rejects.toThrow('사용할 수 없는 LLM 입니다: codex');
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 	it('parseJsonBody: thinking 이 섞인 출력에서도 첫 균형 객체를 건진다', () => {

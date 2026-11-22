@@ -1,9 +1,9 @@
-/** 분석에 쓸 수 있는 LLM — GLM(z.ai) 하나다. */
-export const PROVIDERS = ['glm'] as const;
+/** 분석에 쓸 수 있는 LLM — Agy(Antigravity CLI, Gemini)와 GLM(z.ai). 첫 항목이 기본 선택이다. */
+export const PROVIDERS = ['agy', 'glm'] as const;
 export type Provider = (typeof PROVIDERS)[number];
-export const PROVIDER_LABEL: Record<Provider, string> = { glm: 'GLM' };
+export const PROVIDER_LABEL: Record<Provider, string> = { agy: 'Gemini 3.8 (Agy)', glm: 'GLM' };
 
-/** 분석 UI 에서 재분석 버튼 옆에 보여주는 프로바이더 옵션 (catalog 의 providers 키와 동기화) */
+/** 분석 UI 에서 재분석 버튼 옆에 보여주는 프로바이더 옵션 — baton 카탈로그와는 무관하다(baton-catalog.ts 참고) */
 export const AVAILABLE_PROVIDERS: readonly { id: Provider; label: string }[] = PROVIDERS.map((id) => ({ id, label: PROVIDER_LABEL[id] }));
 
 /** 삭제된 LLM. 옛 기록의 requested_provider·meta.provider 값이 여기 남는다 */
@@ -11,7 +11,6 @@ const LEGACY_PROVIDER_LABEL: Record<string, string> = {
 	claude: 'Claude',
 	zai: 'GLM 5.3 (Z.AI)',
 	codex: 'Codex',
-	agy: 'Agy (Gemini)',
 	omlx: 'Qwen (oMLX)'
 };
 
