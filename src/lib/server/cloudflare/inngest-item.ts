@@ -2,7 +2,6 @@
  * 기존 저장 계약은 commitCloudResult(기존 runner와 동일 S3/D1 구조)를 재사용해 보존한다. */
 import { StepError } from 'inngest';
 import type { ItemRecord } from '$lib/types';
-import { currentFeedback } from '$lib/types';
 import type { ClaimedJob, D1DatabaseLike } from './jobs';
 import { cloudItem, commitCloudResult, hasImageMagicBytes, persistCloudNormalizedImage, resolveS3, updateCloudJobStage, workbooksFromEnv, type CloudflareEnv } from './runtime';
 import { normalizeCloudImage } from './item-normalize';
@@ -53,8 +52,6 @@ export async function loadInngestItemSnapshot(env: CloudflareEnv, job: ClaimedJo
 	if (!entity) return null;
 	const record = JSON.parse(entity.record_json) as ItemRecord;
 	if (job.provider) record.requested_provider = job.provider as ItemRecord['requested_provider'];
-	const feedback = await env.DB.prepare('SELECT payload_json FROM feedback WHERE entity_id = ? ORDER BY updated_at').bind(job.entity_id).all<{ payload_json: string }>();
-	record.feedback = (feedback.results ?? []).map((entry) => JSON.parse(entry.payload_json));
 	const patterns = await env.DB.prepare(`SELECT json_extract(record_json,'$.analysis.error_analysis.error_pattern_id') AS id, COUNT(*) AS count,
 		MIN(json_extract(record_json,'$.analysis.error_analysis.misconception')) AS example FROM entities WHERE kind='item' AND status='done' AND deleted_at IS NULL
 		AND json_extract(record_json,'$.analysis.error_analysis.error_pattern_id') IS NOT NULL

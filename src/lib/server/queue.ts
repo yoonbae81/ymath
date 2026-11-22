@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ACTIVE_STATUSES, currentFeedback } from '$lib/types';
+import { ACTIVE_STATUSES } from '$lib/types';
 import type { Provider } from '$lib/types';
 import { analyzeItem, providerFor, type Analyzer } from './analyze';
 import { settings } from './config';
@@ -122,7 +122,7 @@ export class JobQueue {
 					record,
 					dir,
 					ocrText,
-					feedback: currentFeedback(record) ?? undefined,
+					comment: record.request_note ?? undefined,
 					hint: lastError || undefined
 				});
 				const meta = {

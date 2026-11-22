@@ -7,19 +7,12 @@
 	import { renderMath, renderMarkdown } from '$lib/math';
 	import { formatDate, formatDateTime, formatDateTimeFull } from '$lib/time';
 	import { problemNumber } from '$lib/report-links';
-	import { STATUS_LABEL, STATUS_TONE, hasActive } from '$lib/status';
 	import {
 		ERROR_TYPES,
-		FEEDBACK_ASKS_COMMENT,
-		FEEDBACK_CHOICES,
-		FEEDBACK_COMMENT_MAX,
-		FEEDBACK_LABEL,
-		currentFeedback,
+		REQUEST_NOTE_MAX,
 		getAvailablePeriods,
 		isItemInPeriod,
 		providerLabel,
-		PROVIDER_LABEL,
-		type FeedbackChoice,
 		type ItemRecord,
 		type SavedAnalysis,
 		AVAILABLE_PROVIDERS
@@ -30,8 +23,6 @@
 	let topic = $state('');
 	let workbook = $state('');
 	let errorType = $state('');
-	// 분석이 끝났는데 아직 반응을 남기지 않은 것만 본다
-	let onlyUnreviewed = $state(false);
 	// 즐겨찾기(나중에 다시 볼 오답)만 본다
 	let onlyFavorite = $state(false);
 	// 처음에는 최근 10일만 보여 준다(지난 오답은 기간 선택으로 넓힌다). 상세 링크(?id=)는 기간 필터와 무관하게 열린다
@@ -40,6 +31,8 @@
 	let actionError = $state<string | null>(null);
 	// 재분석에 쓸 LLM. 고르기 전에는 이 항목의 마지막 선택(없으면 서버 기본값)을 보여 준다
 	let selectedProvider = $state<string | null>(null);
+	// 재분석 요청 때 분석 프롬프트에 덧붙일 사용자 코멘트
+	let raComment = $state('');
 
 	// 공유 링크로 들어온 방문자는 보기만 한다(원본 사진은 서버 설정에 따라 숨김)
 	const readonly = false;
@@ -50,8 +43,6 @@
 
 	const availablePeriods = $derived(getAvailablePeriods(data.items));
 
-	const unreviewed = (i: ItemRecord) => i.status === 'done' && !currentFeedback(i);
-	const unreviewedCount = $derived(data.items.filter(unreviewed).length);
 	const favoriteCount = $derived(data.items.filter((i) => i.favorite).length);
 
 	// 프로바이더별 분석 파일(analysis-<provider>.json). 2개 이상이면 상세에서 탭으로 전환한다
@@ -77,19 +68,11 @@
 				(!topic || i.analysis?.classification.topic === topic) &&
 				(!workbook || i.workbook.id === workbook) &&
 				(!errorType || i.analysis?.error_analysis.error_type === errorType) &&
-				(!onlyUnreviewed || unreviewed(i)) &&
 				(!onlyFavorite || i.favorite) &&
 				isItemInPeriod(i.created_at, period)
 		)
 	);
-	const filtering = $derived(!!(topic || workbook || errorType || onlyUnreviewed || onlyFavorite || period));
-
-	// 진행 중인 항목이 있으면 3초마다 새로 읽는다
-	$effect(() => {
-		if (!hasActive(data.items)) return;
-		const t = setInterval(() => invalidate('app:items'), 3000);
-		return () => clearInterval(t);
-	});
+	const filtering = $derived(!!(topic || workbook || errorType || onlyFavorite || period));
 
 	// 오답분석을 열면 확인 시각을 기록한다. 한 번 열 때 하나만 기록하고, 닫았다 다시 열면 다시 기록한다. 게스트(공유 링크)는 기록하지 않는다
 	let markedViewId = $state<string | null>(null);
@@ -99,7 +82,7 @@
 			return;
 		}
 		const i = open;
-		if (readonly || !i || i.status !== 'done' || !i.analysis || markedViewId === i.id) return;
+		if (readonly || !i || !i.analysis || markedViewId === i.id) return;
 		markedViewId = i.id;
 		markViewed(i.id);
 	});
@@ -118,7 +101,7 @@
 	$effect(() => {
 		const id = openId;
 		const item = open;
-		if (!id || !item || item.status !== 'done') return;
+		if (!id || !item) return;
 		const key = `${id}:${item.meta?.analyzed_at ?? ''}`;
 		if (loadedKey === key) return;
 		loadedKey = key;
@@ -139,24 +122,11 @@
 		}
 	}
 
-	// 분석 반응(라디오). 이미 남긴 답이 있으면 '수정'을 눌러야 다시 열린다
-	let fbChoice = $state<FeedbackChoice | null>(null);
-	let fbComment = $state('');
-	let fbEditing = $state(false);
-
-	// 페이지를 연 직후 바로 저장하는 것을 막는 최소 읽기 시간. 그 전에는 결과를 골라도 확인이 비활성 상태로 남는다(별도 안내는 없음)
-	const FEEDBACK_DWELL_MS = 40_000;
-	let feedbackUnlocked = $state(false);
-	$effect(() => {
-		const t = setTimeout(() => (feedbackUnlocked = true), FEEDBACK_DWELL_MS);
-		return () => clearTimeout(t);
-	});
+	// 분석 반응(라디오)은 폐기됐다 — 불만족은 재분석 요청(코멘트+모델 선택)으로 표현한다
 
 	function show(id: string | null) {
 		actionError = null;
-		fbChoice = null;
-		fbComment = '';
-		fbEditing = false;
+		raComment = '';
 		analyses = [];
 		tabIdx = null;
 		loadedKey = '';
@@ -183,9 +153,18 @@
 		}
 	}
 
-	const retry = (i: ItemRecord) => {
+	// 코멘트·모델을 골라 다시 분석을 요청한다. 요청이 받아들여지면 이 항목은 분석이 끝날 때까지 목록에서 내려간다
+	const reanalyze = (i: ItemRecord) => {
 		selectedProvider = i.meta?.provider ?? selectedProvider;
-		call('POST', `${base}/api/items/${i.id}/retry${selectedProvider ? `?provider=${selectedProvider}` : ''}`);
+		call(
+			'POST',
+			`${base}/api/items/${i.id}/retry${selectedProvider ? `?provider=${selectedProvider}` : ''}`,
+			() => {
+				raComment = '';
+				show(null);
+			},
+			{ comment: raComment }
+		);
 	};
 	// 별은 눌리자마자 채워지게(터치 피드백) 서버 저장을 기다리지 않는다. 저장에 실패하면 되돌린다
 	async function toggleFavorite(i: ItemRecord) {
@@ -204,23 +183,6 @@
 			actionError = e instanceof Error ? e.message : '즐겨찾기를 저장하지 못했어요';
 		}
 	}
-	function editFeedback(i: ItemRecord) {
-		const f = currentFeedback(i);
-		fbChoice = f?.choice ?? null;
-		fbComment = f?.comment ?? '';
-		fbEditing = true;
-	}
-	const sendFeedback = (i: ItemRecord) =>
-		call(
-			'POST',
-			`${base}/api/items/${i.id}/feedback`,
-			() => {
-				fbEditing = false;
-				fbChoice = null;
-				fbComment = '';
-			},
-			{ choice: fbChoice, comment: fbChoice && FEEDBACK_ASKS_COMMENT.includes(fbChoice) ? fbComment : '' }
-		);
 	const remove = (i: ItemRecord) => {
 		if (confirm(`이 오답(${i.workbook.name})을 삭제할까요? 사진과 분석 결과가 모두 지워져요.`)) call('DELETE', `${base}/api/items/${i.id}`, () => show(null));
 	};
@@ -267,13 +229,12 @@
 </div>
 
 <div class="count">
-	<span>{filtering ? `${filtered.length} / ` : ''}총 {data.items.length}건{#if unreviewedCount} · 미확인 {unreviewedCount}건{/if}{#if favoriteCount} · 즐겨찾기 {favoriteCount}건{/if}</span>
-	<label class="only-unreviewed"><input type="checkbox" bind:checked={onlyUnreviewed} /> 미확인</label>
-	<label class="only-unreviewed only-favorite" title="즐겨찾기만 보기"><input type="checkbox" bind:checked={onlyFavorite} aria-label="즐겨찾기만 보기" /><span class="star" class:on={onlyFavorite}>★</span></label>
+	<span>{filtering ? `${filtered.length} / ` : ''}총 {data.items.length}건{#if favoriteCount} · 즐겨찾기 {favoriteCount}건{/if}</span>
+	<label class="only-favorite" title="즐겨찾기만 보기"><input type="checkbox" bind:checked={onlyFavorite} aria-label="즐겨찾기만 보기" /><span class="star" class:on={onlyFavorite}>★</span></label>
 </div>
 
 {#if filtered.length === 0}
-	<p class="empty">{data.items.length === 0 ? '아직 올린 오답이 없어요.' : '조건에 맞는 오답이 없어요.'}</p>
+	<p class="empty">{data.items.length === 0 ? '아직 분석이 끝난 오답이 없어요.' : '조건에 맞는 오답이 없어요.'}</p>
 {/if}
 
 <div class="list">
@@ -289,16 +250,12 @@
 						<span class="badge wb">{i.workbook.name}</span>
 						{#if num}<span class="badge pnum">{num}</span>{/if}
 						{#if a}<span class="badge etype">{a.error_analysis.error_type}</span>{/if}
-						{#if i.status !== 'done'}
-							<span class="badge {STATUS_TONE[i.status]}">{STATUS_LABEL[i.status]}</span>
-						{/if}
 						{#if i.flags.taxonomy_mismatch.length}<span class="badge warn">분류 확인</span>{/if}
-						{#if unreviewed(i)}<span class="badge bad">미확인</span>{/if}
 						{#if i.favorite}<span class="badge fav-star" title="즐겨찾기">★</span>{/if}
 					</div>
 					<span class="badge date">{formatDate(i.created_at)}</span>
 				</div>
-				<p class="title">{a?.asks ?? (i.status === 'failed' ? '분석에 실패했어요' : '분석을 기다리고 있어요')}</p>
+				<p class="title">{a?.asks ?? ''}</p>
 				{#if a?.classification.unit_major}
 					<small>{a.classification.unit_major}</small>
 				{/if}
@@ -324,9 +281,6 @@
 						{/if}
 						{#if a}
 							<span class="badge etype">{a.error_analysis.error_type}</span>
-						{/if}
-						{#if open.status !== 'done'}
-							<span class="badge {STATUS_TONE[open.status]}">{STATUS_LABEL[open.status]}</span>
 						{/if}
 						{#if open.flags.taxonomy_mismatch.length}
 							<span class="badge warn">분류 확인</span>
@@ -369,9 +323,6 @@
 				</div>
 			{/if}
 
-			{#if open.status === 'failed'}
-				<p class="alert bad">분석에 실패했어요: {open.error}</p>
-			{/if}
 			{#if open.flags.ocr_missing}<p class="alert warn">글자 인식(OCR)이 실패해서 사진만 보고 분석했어요.</p>{/if}
 			{#each open.flags.taxonomy_mismatch as m (m)}<p class="alert warn">분류 확인 필요: {m}</p>{/each}
 			{#if a?.flags.multiple_problems}<p class="alert warn">사진에 문제가 여러 개 있어요. 가장 주된 한 문제만 분석했어요.</p>{/if}
@@ -380,7 +331,7 @@
 			{#each open.flags.guardrail as g (g)}<p class="alert warn">형식 확인: {g}</p>{/each}
 
 			{#if a}
-				<!-- 보고서와 같은 디자인 장치(ui.css): 구분 띠, 번호 배지, 강조 박스, 라벨 목록 -->
+			<!-- 보고서와 같은 디자인 장치(ui.css): 구분 띠, 번호 배지, 강조 박스, 라벨 목록 -->
 				<section>
 					<h3 class="band">분류</h3>
 					<p>
@@ -473,42 +424,25 @@
 					<p class="muted">패턴: {a.error_analysis.error_pattern_id}</p>
 				</section>
 
-				{#if open.status === 'done' && !readonly}
-					{@const done = currentFeedback(open)}
-					<section class="feedback">
-						<h3 class="band">오답노트 피드백</h3>
-						{#if done && !fbEditing}
-							<p class="fb-done">
-								<span class="badge ok">✓ 확인함</span>
-								{FEEDBACK_LABEL[done.choice]}
-								<button class="link" disabled={busy} onclick={() => editFeedback(open)}>수정</button>
-							</p>
-							{#if done.comment}<p class="muted">“{done.comment}”</p>{/if}
-						{:else}
-							<fieldset class="fb-choices" disabled={busy}>
-								<legend class="sr-only">분석에 대한 내 생각</legend>
-								{#each FEEDBACK_CHOICES as c (c)}
-									<label class="fb-choice" class:on={fbChoice === c}>
-										<span class="fb-icon">{FEEDBACK_LABEL[c].split(' ')[0]}</span>
-										<span class="fb-text">{FEEDBACK_LABEL[c].split(' ').slice(1).join(' ')}</span>
-										<input type="radio" name="feedback" value={c} bind:group={fbChoice} />
-									</label>
+				{#if !readonly}
+					{@const lastProvider = open.meta?.provider}
+					<section class="reanalyze">
+						<h3 class="band">다시 분석</h3>
+						<textarea
+							class="ra-comment"
+							rows="3"
+							maxlength={REQUEST_NOTE_MAX}
+							placeholder="이 분석에서 고칠 점을 적어 보내면 다음 분석에 반영돼요 (선택)"
+							bind:value={raComment}
+						></textarea>
+						<div class="ra-actions">
+							<select bind:value={selectedProvider} aria-label="분석 모델">
+								{#each AVAILABLE_PROVIDERS as p (p.id)}
+									<option value={p.id}>{p.label}{p.id === lastProvider ? ' · 이전' : ''}</option>
 								{/each}
-							</fieldset>
-							{#if fbChoice && FEEDBACK_ASKS_COMMENT.includes(fbChoice)}
-								<textarea
-									class="fb-comment"
-									rows="2"
-									maxlength={FEEDBACK_COMMENT_MAX}
-									placeholder={fbChoice === 'wrong_diagnosis' ? '어느 부분이 다른지 (선택)' : '어려운 부분 (선택)'}
-									bind:value={fbComment}
-								></textarea>
-							{/if}
-							<div class="fb-actions">
-								<button class="btn primary" disabled={busy || !fbChoice} onclick={() => sendFeedback(open)}>✅ 확인</button>
-								{#if done}<button class="btn" disabled={busy} onclick={() => (fbEditing = false)}>취소</button>{/if}
-							</div>
-						{/if}
+							</select>
+							<button class="btn primary" disabled={busy} onclick={() => reanalyze(open)}>🔄 다시 분석</button>
+						</div>
 					</section>
 				{/if}
 
@@ -517,18 +451,12 @@
 			{:else}
 				<p class="muted">{when(open.created_at)}</p>
 			{/if}
-			{:else if open.status !== 'failed'}
-				<p class="empty">분석이 끝나면 여기에 나와요.</p>
 			{/if}
 
 			{#if actionError}<p class="alert bad">{actionError}</p>{/if}
 			{#if !readonly}
 				<footer>
-					<select bind:value={selectedProvider} aria-label="분석 모델" disabled={open.status !== 'done' && open.status !== 'failed'}>
-						{#each AVAILABLE_PROVIDERS as p (p.id)}<option value={p.id}>{p.label}</option>{/each}
-					</select>
-					<button class="btn" disabled={busy || (open.status !== 'done' && open.status !== 'failed')} onclick={() => retry(open)}>🔄 다시 분석</button>
-					<button class="btn danger" disabled={busy || open.status === 'ocr' || open.status === 'analyzing'} onclick={() => remove(open)}>🗑 삭제</button>
+					<button class="btn danger" onclick={() => remove(open)}>🗑 삭제</button>
 				</footer>
 			{/if}
 		</article>
@@ -585,14 +513,14 @@
 		margin: 12px 2px 8px;
 		font-size: 0.9rem;
 	}
-	.only-unreviewed {
+	.only-favorite {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
 		cursor: pointer;
 		white-space: nowrap;
 	}
-	.only-unreviewed input {
+	.only-favorite input {
 		width: 16px;
 		height: 16px;
 		margin: 0;
@@ -1009,63 +937,11 @@
 		color: var(--text);
 		font-size: 1rem;
 	}
-	.btn.primary {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: #fff;
-	}
-	/* 5개를 폰에서도 한 줄에 가로로 놓는다: 아이콘 · 글자 · 라디오를 세로로 쌓은 칸 */
-	.fb-choices {
-		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
-		gap: 6px;
-		border: none;
-		padding: 0;
-		margin: 12px 0 0;
-		min-width: 0;
-	}
-	.sr-only {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip-path: inset(50%);
-		white-space: nowrap;
-	}
-	.fb-choice {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 4px;
-		padding: 10px 2px 8px;
-		border: 1px solid var(--line);
-		border-radius: 12px;
-		cursor: pointer;
-		text-align: center;
-		white-space: nowrap;
-	}
-	.fb-choice.on {
-		border-color: var(--accent);
-		background: var(--accent-soft);
-	}
-	.fb-icon {
-		font-size: 1.3rem;
-		line-height: 1;
-	}
-	.fb-text {
-		font-size: 0.8rem;
-		font-weight: 600;
-	}
-	.fb-choice input {
-		width: 16px;
-		height: 16px;
-		margin: 2px 0 0;
-		accent-color: var(--accent);
-	}
-	.fb-comment {
+	/* 재분석 요청: 코멘트 textarea + 모델 선택 + 요청 버튼 */
+	.ra-comment {
 		width: 100%;
 		box-sizing: border-box;
-		margin-top: 10px;
+		margin-top: 12px;
 		padding: 10px 12px;
 		border-radius: 12px;
 		border: 1px solid var(--line);
@@ -1074,26 +950,25 @@
 		font: inherit;
 		resize: vertical;
 	}
-	.fb-actions {
+	.ra-actions {
 		display: flex;
 		gap: 10px;
-		margin-top: 12px;
+		margin-top: 10px;
 	}
-	.fb-done {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 8px;
-	}
-	.link {
-		border: none;
-		background: none;
-		color: var(--accent);
+	.ra-actions select {
+		flex: 1 1 160px;
+		padding: 10px;
+		border-radius: 12px;
+		border: 1px solid var(--line);
+		background: var(--surface);
+		color: var(--text);
 		font: inherit;
-		font-weight: 600;
-		text-decoration: underline;
-		cursor: pointer;
-		padding: 0;
+		min-width: 0;
+	}
+	.btn.primary {
+		background: var(--accent);
+		border-color: var(--accent);
+		color: #fff;
 	}
 	.btn.danger {
 		color: var(--bad);
@@ -1108,7 +983,6 @@
 		.count,
 		.list,
 		footer,
-		.feedback,
 		.close {
 			display: none !important;
 		}

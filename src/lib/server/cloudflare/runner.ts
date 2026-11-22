@@ -131,7 +131,7 @@ async function runOnce() {
 			}
 			await setStage('analyzing');
 			const { analyzeItem } = await import('../analyze');
-			const result = await analyzeItem({ record: job.entity, dir, ocrText, feedback: job.entity.feedback?.find((f) => f.analyzed_at === job.entity?.meta?.analyzed_at), knownPatterns: (job as typeof job & { knownPatterns?: { id: string; count: number; example: string }[] }).knownPatterns });
+			const result = await analyzeItem({ record: job.entity, dir, ocrText, comment: job.entity.request_note, knownPatterns: (job as typeof job & { knownPatterns?: { id: string; count: number; example: string }[] }).knownPatterns });
 			analysis = result.analysis;
 			meta = { provider: result.provider, model: result.model, prompt_version: result.promptVersion, analyzed_at: new Date().toISOString() };
 			flags = { ocr_missing: !ocrText.trim(), taxonomy_mismatch: result.taxonomyIssues, guardrail: result.guardrailWarnings };

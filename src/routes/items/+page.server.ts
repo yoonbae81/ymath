@@ -6,7 +6,9 @@ import { NODE_RUNTIME, requireWorkerDatabase } from '$lib/server/runtime-target'
 export const load: PageServerLoad = async ({ depends, platform }) => {
 	depends('app:items');
 	requireWorkerDatabase(platform, NODE_RUNTIME);
-	const items = platform?.env?.DB ? await cloudItems(platform.env) : NODE_RUNTIME ? (await import('$lib/server/store')).listRecords() : [];
+	// 목록은 분석이 끝난 항목만 노출한다. 진행 중·실패는 상태 화면과 업로드 화면이 담당한다
+	const all = platform?.env?.DB ? await cloudItems(platform.env) : NODE_RUNTIME ? (await import('$lib/server/store')).listRecords() : [];
+	const items = all.filter((i) => i.status === 'done' && i.analysis);
 	if (platform?.env?.DB) {
 		let taxonomy: { topics?: string[]; concepts?: Record<string, string> } = {};
 		try { taxonomy = JSON.parse(platform.env.TAXONOMY_JSON ?? '{}'); } catch { /* use stored topic fallback */ }

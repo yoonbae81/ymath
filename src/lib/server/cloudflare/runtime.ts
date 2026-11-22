@@ -1,11 +1,11 @@
 import { claimJob, heartbeatJob, cloudItemBackend, hostedItemPipeline, runnerClaimableKind, type ClaimedJob, type D1DatabaseLike, type D1Statement } from './jobs';
-import { acceptItem, markViewed, saveFeedback, setFavorite } from './repository';
+import { acceptItem, markViewed, setFavorite } from './repository';
 import { batonDefaultProvider } from './baton-catalog';
 import { formatPeriodLabel, isItemInPeriod, isPastMonthPeriod, type ItemRecord, type ReportRecord, type Workbook } from '$lib/types';
 import { cloudReportBackend } from './report-outbox';
 import { requireS3Store, type S3Store } from './s3-store';
 
-export { markViewed, saveFeedback, setFavorite };
+export { markViewed, setFavorite };
 export { cloudItemBackend, runnerClaimableKind } from './jobs';
 
 export interface CloudflareEnv { DB: D1DatabaseLike & { batch<T = unknown>(statements: D1Statement[]): Promise<T[]> }; S3: S3Store; WORKBOOKS_JSON?: string; TAXONOMY_JSON?: string; RUNNER_TOKEN?: string; TEST_ONLY_FIXTURES?: string; REPORT_BACKEND?: string; REPORT_INNGEST_EXECUTION_ENABLED?: string; ITEM_ANALYSIS_BACKEND?: string; OCR_MODEL?: string; STUDENT_NAME?: string; SYNTHETIC_SUBMIT_ENABLED?: string; INNGEST_EVENT_KEY?: string; INNGEST_SIGNING_KEY?: string; ZAI_API_KEY?: string; ZAI_BASE_URL?: string; S3_ENDPOINT?: string; S3_BUCKET?: string; S3_REGION?: string; S3_ACCESS_KEY_ID?: string; S3_SECRET_ACCESS_KEY?: string }
@@ -94,20 +94,16 @@ export async function cloudItem(env: CloudflareEnv, id: string): Promise<ItemRec
 	const record = JSON.parse(row.record_json) as ItemRecord;
 	record.favorite = Boolean(row.favorite);
 	record.viewed_at = row.viewed_at ?? undefined;
-	const feedback = await env.DB.prepare('SELECT payload_json FROM feedback WHERE entity_id = ? ORDER BY updated_at').bind(id).all<{ payload_json: string }>();
-	record.feedback = (feedback.results ?? []).filter((f) => typeof f.payload_json === 'string').map((f) => JSON.parse(f.payload_json));
 	return record;
 }
 
 export async function cloudItems(env: CloudflareEnv): Promise<ItemRecord[]> {
-	const result = await env.DB.prepare(`SELECT e.id,e.record_json,e.favorite,e.viewed_at,
-		COALESCE(json_group_array(f.payload_json) FILTER (WHERE f.payload_json IS NOT NULL),'[]') AS feedback_json
-		FROM entities e LEFT JOIN feedback f ON f.entity_id=e.id WHERE e.kind='item' AND e.deleted_at IS NULL
-		GROUP BY e.id ORDER BY e.created_at DESC`).all<{ id: string; record_json: string; favorite: number; viewed_at: string | null; feedback_json: string }>();
+	const result = await env.DB.prepare(`SELECT e.id,e.record_json,e.favorite,e.viewed_at
+		FROM entities e WHERE e.kind='item' AND e.deleted_at IS NULL
+		ORDER BY e.created_at DESC`).all<{ id: string; record_json: string; favorite: number; viewed_at: string | null }>();
 	return (result.results ?? []).map((row) => {
 		const record = JSON.parse(row.record_json) as ItemRecord;
 		record.favorite = Boolean(row.favorite); record.viewed_at = row.viewed_at ?? undefined;
-		record.feedback = (JSON.parse(row.feedback_json ?? '[]') as string[]).map((value) => JSON.parse(value));
 		return record;
 	});
 }
@@ -132,8 +128,6 @@ export async function claimCloudJob(env: CloudflareEnv, runner: string, now = ne
 	if (!entity || job.kind !== 'item') return { ...job, entity: null };
 	const record = JSON.parse(entity.record_json) as ItemRecord;
 	record.requested_provider = 'glm';
-	const feedback = await env.DB.prepare('SELECT payload_json FROM feedback WHERE entity_id = ? ORDER BY updated_at').bind(job.entity_id).all<{ payload_json: string }>();
-	record.feedback = (feedback.results ?? []).map((entry) => JSON.parse(entry.payload_json));
 	const patterns = await env.DB.prepare(`SELECT json_extract(record_json,'$.analysis.error_analysis.error_pattern_id') AS id, COUNT(*) AS count,
 		MIN(json_extract(record_json,'$.analysis.error_analysis.misconception')) AS example FROM entities WHERE kind='item' AND status='done' AND deleted_at IS NULL
 		AND json_extract(record_json,'$.analysis.error_analysis.error_pattern_id') IS NOT NULL
@@ -242,14 +236,14 @@ export async function persistCloudNormalizedImage(env: CloudflareEnv, job: Claim
 	return true;
 }
 
-export async function queueCloudReanalysis(env: CloudflareEnv, id: string, provider?: string) {
+export async function queueCloudReanalysis(env: CloudflareEnv, id: string, provider?: string, note?: string) {
 	const now = new Date().toISOString();
 	const selectedProvider = provider ?? batonDefaultProvider;
 	const outboxJobId = crypto.randomUUID();
 	const statements = await env.DB.batch([
 		env.DB.prepare(`UPDATE entities SET status='queued', generation=generation+1, updated_at=?,
-		record_json=json_set(record_json,'$.status','queued','$.error',NULL,'$.attempts',0,'$.requested_provider',?)
-		WHERE id=? AND kind='item' AND deleted_at IS NULL AND status IN ('done','failed')`).bind(now, selectedProvider, id),
+		record_json=json_set(record_json,'$.status','queued','$.error',NULL,'$.attempts',0,'$.requested_provider',?,'$.request_note',?)
+		WHERE id=? AND kind='item' AND deleted_at IS NULL AND status IN ('done','failed')`).bind(now, selectedProvider, note ?? null, id),
 		env.DB.prepare(`INSERT INTO jobs (id,entity_id,kind,entity_generation,state,provider,payload,created_at,updated_at)
 		SELECT ?,id,'item',generation,'queued',?,'{}',?,? FROM entities e
 		WHERE id=? AND status='queued' AND deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.entity_id=e.id AND j.state IN ('queued','leased'))`)

@@ -7,8 +7,7 @@
  *   기존 commitCloudResult 계약(lease fencing 유지)으로 최종화한다.
  * - guardrail·taxonomy·schema 최종 검증은 ymath 커밋 경로가 그대로 소유한다(기존 계약 불변).
  * - OCR·claim·outbox는 기존 inngest 경로와 공유된다. llm.xcv.kr 직접 경로는 기본값 아님(flag) 으로 보존된다. */
-import type { Feedback, ItemRecord } from '$lib/types';
-import { currentFeedback } from '$lib/types';
+import type { ItemRecord } from '$lib/types';
 import {
 	ANALYSIS_RESULT_CONTRACT_VERSION,
 	BATON_COMPLETION_EVENT,
@@ -48,7 +47,6 @@ export function buildBatonManifest(input: {
 	taxonomy: Taxonomy;
 	studentName?: string;
 }): BatonManifest {
-	const feedback = currentFeedback(input.record) as Feedback | null;
 	return {
 		contract_version: ANALYSIS_RESULT_CONTRACT_VERSION,
 		job_id: input.jobId,
@@ -56,7 +54,7 @@ export function buildBatonManifest(input: {
 		entity_generation: input.entityGeneration,
 		workbook_name: input.record.workbook.name,
 		student_name: input.studentName?.trim() || null,
-		feedback: feedback ? { choice: feedback.choice, comment: feedback.comment } : null,
+		user_comment: input.record.request_note?.trim() || null,
 		known_patterns: input.knownPatterns,
 		taxonomy_md: renderTaxonomy(input.taxonomy)
 	};

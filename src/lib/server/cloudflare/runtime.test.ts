@@ -46,7 +46,7 @@ describe('Cloudflare storage runtime', () => {
 		const f = fixtureEnv();
 		const record = { id: '20260101-000000-abcd', status: 'queued' };
 		f.setEntity({ id: record.id, record_json: JSON.stringify(record) });
-		expect(await cloudItem(f.env, record.id)).toMatchObject({ ...record, favorite: false, feedback: [] });
+		expect(await cloudItem(f.env, record.id)).toMatchObject({ ...record, favorite: false });
 		expect(await cloudItems(f.env)).toHaveLength(1);
 		expect(f.sql.filter((q) => q.includes('FROM entities')).every((q) => q.includes('deleted_at IS NULL'))).toBe(true);
 	});

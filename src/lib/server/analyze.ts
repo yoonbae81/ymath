@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PROVIDERS, type Analysis, type Feedback, type ItemRecord, type Provider } from '$lib/types';
+import { PROVIDERS, type Analysis, type ItemRecord, type Provider } from '$lib/types';
 import { renderPrompt, settings, promptsDir } from './config';
 import { checkGuardrail } from './guardrail';
 import { IMAGE_FILE } from './image';
@@ -20,8 +20,8 @@ export interface AnalyzeContext {
 	/** 항목 폴더(image.jpg 가 있는 곳) */
 	dir: string;
 	ocrText: string;
-	/** 지금 다시 분석하려는 기존 분석에 사용자가 남긴 반응 */
-	feedback?: Feedback;
+	/** 재분석 요청 때 사용자가 덧붙인 코멘트. 프롬프트에 데이터로 들어간다 */
+	comment?: string;
 	/** Cloud runner can provide a bounded taxonomy pattern snapshot without depending on the Node disk store. */
 	knownPatterns?: { id: string; count: number; example: string }[];
 	/** 재시도 때 직전 실패 사유. 프롬프트에 넣어 같은 실수를 반복하지 않게 한다 */
@@ -57,7 +57,7 @@ export const providerFor = (record: ItemRecord): Provider => {
 };
 
 /** 실제 분석기: provider별 레인(agy=Gemini CLI, glm=z.ai)으로 구조화된 결과를 받는다 */
-export const analyzeItem: Analyzer = async ({ record, dir, ocrText, feedback, hint, knownPatterns }) => {
+export const analyzeItem: Analyzer = async ({ record, dir, ocrText, comment, hint, knownPatterns }) => {
 	const provider = providerFor(record);
 	const guideline = renderPrompt(readFileSync(join(promptsDir(), 'analyze.md'), 'utf8'));
 	const curriculum = readFileSync(join(promptsDir(), 'curriculum.md'), 'utf8');
@@ -72,7 +72,7 @@ export const analyzeItem: Analyzer = async ({ record, dir, ocrText, feedback, hi
 		record,
 		imagePath,
 		ocrText,
-		feedback,
+		comment,
 		hint,
 		provider
 	});

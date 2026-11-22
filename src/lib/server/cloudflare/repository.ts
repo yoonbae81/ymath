@@ -1,4 +1,4 @@
-import type { ItemRecord, Feedback } from '$lib/types';
+import type { ItemRecord } from '$lib/types';
 import type { D1DatabaseLike, D1Statement } from './jobs';
 
 type Result = { success?: boolean; meta?: { changes?: number } };
@@ -54,17 +54,6 @@ export async function setFavorite(db: D1DatabaseLike, id: string, value: boolean
 export async function markViewed(db: D1DatabaseLike, id: string, now = new Date().toISOString()) {
 	const r = await db.prepare("UPDATE entities SET viewed_at = ?, updated_at = ? WHERE id = ? AND kind = 'item' AND deleted_at IS NULL")
 		.bind(now, now, id).run();
-	return changed(r);
-}
-
-/** The INSERT SELECT makes status and analyzed_at validation atomic with the feedback write (409 if zero rows). */
-export async function saveFeedback(db: D1DatabaseLike, id: string, analyzedAt: string, feedback: Feedback, now = new Date().toISOString()) {
-	const r = await db.prepare(`INSERT INTO feedback (entity_id,analyzed_at,payload_json,updated_at)
-		SELECT id, ?, ?, ? FROM entities
-		WHERE id = ? AND kind = 'item' AND deleted_at IS NULL AND status = 'done'
-		AND json_extract(record_json, '$.meta.analyzed_at') = ?
-	ON CONFLICT(entity_id,analyzed_at) DO UPDATE SET payload_json = excluded.payload_json, updated_at = excluded.updated_at`)
-		.bind(analyzedAt, JSON.stringify(feedback), now, id, analyzedAt).run();
 	return changed(r);
 }
 

@@ -86,32 +86,8 @@ export interface RecordFlags {
 	guardrail: string[];
 }
 
-/** 학생이 분석 결과를 읽고 남기는 반응. 값마다 프롬프트 개선 방향이 다르다 */
-export const FEEDBACK_CHOICES = ['accurate', 'learned', 'already_knew', 'too_hard', 'wrong_diagnosis'] as const;
-export type FeedbackChoice = (typeof FEEDBACK_CHOICES)[number];
-
-export const FEEDBACK_LABEL: Record<FeedbackChoice, string> = {
-	accurate: '🎯 정확함',
-	learned: '💡 새로 앎',
-	already_knew: '📖 이미 앎',
-	too_hard: '🤔 어려움',
-	wrong_diagnosis: '❌ 다름'
-};
-
-/** 부정 응답은 무엇이 문제였는지 한 줄을 받는다 */
-export const FEEDBACK_ASKS_COMMENT: FeedbackChoice[] = ['too_hard', 'wrong_diagnosis'];
-export const FEEDBACK_COMMENT_MAX = 300;
-
-/** 어느 분석(analyzed_at)에 대한 반응인지와 그때의 지침·모델을 함께 남겨, 지침을 바꾼 뒤 비교할 수 있게 한다 */
-export interface Feedback {
-	choice: FeedbackChoice;
-	comment: string;
-	created_at: string;
-	analyzed_at: string;
-	prompt_version: string;
-	provider?: string;
-	model: string;
-}
+/** 재분석 요청 때 분석 프롬프트에 덧붙이는 사용자 코멘트 최대 길이 */
+export const REQUEST_NOTE_MAX = 500;
 
 export interface ItemRecord {
 	schema_version: 1;
@@ -127,8 +103,8 @@ export interface ItemRecord {
 	/** 과거 재분석 요청 provider도 읽기 위해 문자열로 보존. 새 실행은 GLM만 사용 */
 	requested_provider?: string;
 	meta: { provider?: string; model: string; prompt_version: string; analyzed_at: string } | null;
-	/** 분석 결과에 대한 학생 반응. 재분석해도 지우지 않고, 같은 분석에 다시 답하면 덮어쓴다 */
-	feedback?: Feedback[];
+	/** 재분석 요청 때 사용자가 덧붙인 코멘트. 다음 분석 프롬프트에 데이터로 들어가고, 새 요청 때 덮어쓴다 */
+	request_note?: string;
 	/** 오답분석 화면을 마지막으로 연 시각. 가족이 상세를 열 때마다 덮어쓴다. 없으면 아직 확인하지 않은 것 */
 	viewed_at?: string | null;
 	/** 나중에 다시 볼 오답 표시. 목록에서 별로 보이고 즐겨찾기만 골라 볼 수 있다. 재분석해도 유지한다 */
@@ -140,12 +116,6 @@ export interface SavedAnalysis {
 	analysis: Analysis;
 	meta: { provider?: string; model: string; prompt_version: string; analyzed_at: string };
 	flags: RecordFlags;
-}
-
-/** 지금 보이는 분석에 남긴 반응. 재분석으로 분석이 바뀌었으면 없는 것으로 본다 */
-export function currentFeedback(r: Pick<ItemRecord, 'meta' | 'feedback'>): Feedback | null {
-	if (!r.meta) return null;
-	return r.feedback?.find((f) => f.analyzed_at === r.meta!.analyzed_at) ?? null;
 }
 
 export type ReportStatus = 'queued' | 'generating' | 'done' | 'failed';
